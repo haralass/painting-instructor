@@ -96,7 +96,14 @@ type JobStatus = {
 
 type Manifest = {
   job_id: string;
-  input: { medium: string; palette_size: number; detail_level: number; value_zones: number };
+  input: {
+    medium: string;
+    palette_size: number;
+    detail_level: number;
+    value_zones: number;
+    background_detail?: boolean;
+    texture_detail?: boolean;
+  };
   image: { width: number; height: number };
   pages: string[];
   detail_levels: Record<string, {
@@ -106,6 +113,13 @@ type Manifest = {
   palette: { id: number; name: string; base_rgb: [number,number,number]; area_fraction: number }[];
   colour_families: unknown[];
   value_zones: { id: number; label: string; grey_value: number }[];
+  teaching_stages?: {
+    order: number;
+    name: string;
+    description: string;
+    analysis_layers: string[];
+  }[];
+  teaching_instructions?: Record<string, string>;
   video?: string;
   pdf?: string;
 };
@@ -361,6 +375,24 @@ export default function ResultsPage() {
                 ))}
               </div>
 
+              {/* Background/texture analysis indicators */}
+              <div className="flex gap-3 mt-1">
+                {manifest?.input?.texture_detail !== undefined && (
+                  <span className="text-xs" style={{ color: "var(--text-dim)" }}>
+                    Texture: <span style={{ color: manifest.input.texture_detail ? "var(--accent)" : "var(--text-dim)" }}>
+                      {manifest.input.texture_detail ? "on" : "off"}
+                    </span>
+                  </span>
+                )}
+                {manifest?.input?.background_detail !== undefined && (
+                  <span className="text-xs" style={{ color: "var(--text-dim)" }}>
+                    Background: <span style={{ color: manifest.input.background_detail ? "var(--accent)" : "var(--text-dim)" }}>
+                      {manifest.input.background_detail ? "on" : "off"}
+                    </span>
+                  </span>
+                )}
+              </div>
+
               {/* Compare mode */}
               <div className="flex gap-2 mt-2 flex-wrap">
                 {(["analysis", "reference", "side_by_side", "overlay"] as CompareMode[]).map(m => (
@@ -448,6 +480,50 @@ export default function ResultsPage() {
                 {manifest.image?.width} × {manifest.image?.height}px
               </p>
             </div>
+
+            {/* Teaching stages */}
+            {manifest?.teaching_stages && manifest.teaching_stages.length > 0 && (
+              <div className="p-4 border-b" style={{ borderColor: "var(--border)" }}>
+                <p className="text-xs font-semibold uppercase tracking-widest mb-3"
+                   style={{ color: "var(--text-dim)" }}>Lesson stages</p>
+                <div className="space-y-3">
+                  {manifest.teaching_stages.map(stage => (
+                    <div key={stage.order} className="flex gap-2">
+                      <div className="flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold mt-0.5"
+                           style={{ background: "var(--accent)", color: "#0f0e0d" }}>
+                        {stage.order}
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold" style={{ color: "var(--text)" }}>
+                          {stage.name}
+                        </p>
+                        <p className="text-xs mt-0.5 leading-relaxed" style={{ color: "var(--text-dim)" }}>
+                          {stage.description}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Teaching instructions */}
+            {manifest?.teaching_instructions && Object.keys(manifest.teaching_instructions).length > 0 && (
+              <div className="p-4 border-b" style={{ borderColor: "var(--border)" }}>
+                <p className="text-xs font-semibold uppercase tracking-widest mb-2"
+                   style={{ color: "var(--text-dim)" }}>Key principles</p>
+                <div className="space-y-2">
+                  {Object.entries(manifest.teaching_instructions).map(([key, value]) => (
+                    <p key={key} className="text-xs leading-relaxed" style={{ color: "var(--text-dim)" }}>
+                      <span className="font-medium" style={{ color: "var(--accent)" }}>
+                        {key.replace("_note", "").replace(/_/g, " ")}:
+                      </span>{" "}
+                      {value}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Value zones */}
             {manifest.value_zones && manifest.value_zones.length > 0 && (

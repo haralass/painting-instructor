@@ -1,21 +1,12 @@
 from __future__ import annotations
+import colorsys
+
 import numpy as np
 from sklearn.cluster import MiniBatchKMeans
 from skimage import color as skcolor
 
 from .models import ColourFamily, PaletteEntry
 from .preprocessing import ImageCache
-
-_FAMILY_NAMES = [
-    "Golden yellow", "Crimson red", "Cobalt blue", "Viridian green",
-    "Burnt sienna", "Titanium white", "Ivory black", "Cadmium orange",
-    "Dioxazine purple", "Raw umber", "Yellow ochre", "Prussian blue",
-    "Alizarin crimson", "Cerulean blue", "Sap green", "Naples yellow",
-    "Payne's grey", "Permanent rose", "Terre verte", "Warm grey",
-    "Cool grey", "Neutral tint", "Chinese white", "Sepia",
-    "Indigo", "Vermillion", "Aureolin", "Hooker's green",
-    "French ultramarine", "Lemon yellow", "Burnt umber", "Olive green",
-]
 
 
 def extract_colour_families(
@@ -33,7 +24,7 @@ def extract_colour_families(
     -------
     families    : list[ColourFamily]
     palette     : list[PaletteEntry]
-    internal    : dict with 'centres_lab' array for _nearest_colour_family lookups
+    internal    : dict with 'centres_lab' and 'cluster_id_to_rank' for lookups
     """
     smooth = cache.smooth.astype(np.float32) / 255.0
     lab    = skcolor.rgb2lab(smooth).reshape(-1, 3)
@@ -62,6 +53,11 @@ def extract_colour_families(
     # Sort by area coverage descending
     order = np.argsort(-counts)
 
+    # Build cluster_id → rank mapping for stable ID lookups
+    cluster_id_to_rank: dict[int, int] = {
+        int(cluster_idx): rank for rank, cluster_idx in enumerate(order)
+    }
+
     families: list[ColourFamily] = []
     palette:  list[PaletteEntry] = []
 
@@ -69,7 +65,7 @@ def extract_colour_families(
         lab_c   = centres_lab[idx]
         rgb_c   = tuple(int(v) for v in centres_rgb[idx])
         area_f  = float(counts[idx] / total)
-        name    = _FAMILY_NAMES[rank] if rank < len(_FAMILY_NAMES) else f"Colour {rank + 1}"
+        name    = _colour_name_from_lab(lab_c, rank)
 
         variations = _make_variations(lab_c)
 
@@ -91,8 +87,47 @@ def extract_colour_families(
             variations=variations,
         ))
 
-    internal = {"centres_lab": centres_lab, "order": order}
+    internal = {
+        "centres_lab": centres_lab,
+        "order": order,
+        "cluster_id_to_rank": cluster_id_to_rank,
+    }
     return families, palette, internal
+
+
+def _colour_name_from_lab(lab: np.ndarray, rank: int) -> str:
+    """Approximate colour name from LAB values, falling back to numbered label."""
+    rgb = skcolor.lab2rgb(lab.reshape(1, 1, 3))[0, 0]
+    r, g, b = float(rgb[0]), float(rgb[1]), float(rgb[2])
+    h, l, s = colorsys.rgb_to_hls(r, g, b)
+    h_deg = h * 360
+    if s < 0.12:
+        if l > 0.85:
+            return "Near-white"
+        if l < 0.15:
+            return "Near-black"
+        return "Grey"
+    if l > 0.85:
+        return "Light tint"
+    if l < 0.15:
+        return "Dark shade"
+    if h_deg < 15 or h_deg >= 345:
+        return "Red"
+    if h_deg < 40:
+        return "Orange"
+    if h_deg < 70:
+        return "Yellow"
+    if h_deg < 150:
+        return "Green"
+    if h_deg < 200:
+        return "Cyan"
+    if h_deg < 260:
+        return "Blue"
+    if h_deg < 290:
+        return "Violet"
+    if h_deg < 345:
+        return "Magenta"
+    return f"Colour {rank + 1}"
 
 
 def _make_variations(lab: np.ndarray) -> dict[str, tuple[int, int, int]]:

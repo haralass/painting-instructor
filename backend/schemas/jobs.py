@@ -53,3 +53,10 @@ def validate_value_zones(v: int) -> int:
     if v not in VALID_VALUE_ZONES:
         raise ValueError(f"value_zones must be 3, 5, or 7, got {v}")
     return v
+
+
+def validate_texture_detail(v: bool) -> bool:
+    return bool(v)
+
+def validate_background_detail(v: bool) -> bool:
+    return bool(v)

@@ -18,6 +18,7 @@ from ..schemas.jobs import (
     validate_detail_level,
     validate_value_zones,
 )
+from ..teaching.mediums import MEDIUMS, get_medium as _get_medium_cfg
 
 app = FastAPI(title="Painting Instructor API", version="0.3.0")
 
@@ -67,6 +68,8 @@ async def create_job(
     n_colors:      int = Form(0),
     detail_level:  int = Form(3),
     value_zones:   int = Form(5),
+    texture_detail:    bool = Form(True),
+    background_detail: bool = Form(False),
 ):
     """Upload a reference photo and start the painting instructor pipeline."""
     if file.content_type not in ALLOWED_TYPES:
@@ -91,10 +94,12 @@ async def create_job(
     run_pipeline.apply_async(
         args=[str(img_path), job_id],
         kwargs={
-            "medium":       medium,
-            "palette_size": resolved_palette,
-            "detail_level": detail_level,
-            "value_zones":  value_zones,
+            "medium":             medium,
+            "palette_size":       resolved_palette,
+            "detail_level":       detail_level,
+            "value_zones":        value_zones,
+            "texture_detail":     texture_detail,
+            "background_detail":  background_detail,
         },
         task_id=job_id,
     )
@@ -158,6 +163,31 @@ def download_pdf(job_id: str):
     if not pdf_path.exists():
         raise HTTPException(404, "PDF not ready yet")
     return FileResponse(pdf_path, media_type="application/pdf", filename="tutorial_book.pdf")
+
+
+@app.get("/mediums/")
+def list_mediums():
+    """List available painting mediums with their recommended settings."""
+    return {
+        mid: {
+            "name":                     cfg["name"],
+            "recommended_value_zones":  cfg["recommended_value_zones"],
+            "recommended_palette_size": cfg["recommended_palette_size"],
+            "edge_strategy":            cfg["edge_strategy"],
+            "texture_strategy":         cfg["texture_strategy"],
+            "stage_count":              len(cfg["stages"]),
+        }
+        for mid, cfg in MEDIUMS.items()
+    }
+
+
+@app.get("/mediums/{medium}")
+def get_medium_config(medium: str):
+    """Full config for a specific painting medium including ordered stages and instructions."""
+    from ..schemas.jobs import VALID_MEDIUMS
+    if medium not in VALID_MEDIUMS:
+        raise HTTPException(404, f"Unknown medium: {medium!r}")
+    return _get_medium_cfg(medium)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

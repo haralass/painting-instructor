@@ -10,7 +10,7 @@ from .preprocessing import prepare
 from .values import compute_value_zones, render_value_map
 from .colours import extract_colour_families
 from .regions import build_region_hierarchy
-from .edges import extract_edge_hierarchy, render_outline_levels
+from .edges import extract_edge_hierarchy, render_outline_levels, export_edges_svg
 from .renderer import render_detail_levels
 
 log = logging.getLogger(__name__)
@@ -25,6 +25,8 @@ def run_hierarchical_analysis(
     medium: str,
     fg_mask: np.ndarray | None = None,
     seed: int = 42,
+    texture_detail: bool = True,
+    background_detail: bool = False,
 ) -> dict:
     """
     Full hierarchical analysis pipeline.
@@ -74,7 +76,11 @@ def run_hierarchical_analysis(
             label_map_for_edges = label_maps[sc]
             break
 
-    edges, edge_maps = extract_edge_hierarchy(cache, label_map_for_edges, fg_mask)
+    edges, edge_maps = extract_edge_hierarchy(
+        cache, label_map_for_edges, fg_mask,
+        include_texture=texture_detail,
+        include_background=background_detail,
+    )
     outline_composites = render_outline_levels(edge_maps)
 
     # Save individual outline composites
@@ -110,6 +116,10 @@ def run_hierarchical_analysis(
         [e.model_dump() for e in edges[:5000]], indent=2  # cap to avoid huge files
     ))
 
+    svg_str  = export_edges_svg(edges, cache.W, cache.H)
+    svg_path = out_dir / "edges.svg"
+    svg_path.write_text(svg_str)
+
     # ── Build return dict ─────────────────────────────────────────────────────
     def _lvl_dict(dl):
         return {
@@ -132,4 +142,5 @@ def run_hierarchical_analysis(
         "value_zones_path": zone_map_path,
         "regions_json":     str(regions_path),
         "edges_json":       str(edges_path),
+        "edges_svg":        str(svg_path),
     }

@@ -7,16 +7,9 @@ from skimage import segmentation, graph as sk_graph, measure, color as skcolor
 from sklearn.cluster import MiniBatchKMeans
 from scipy.ndimage import distance_transform_edt
 
+from ...utils.fonts import get_font as _font
+
 _bisenet_model = None
-
-
-def _font(size: int) -> ImageFont.FreeTypeFont:
-    for p in ["/System/Library/Fonts/HelveticaNeue.ttc",
-              "/System/Library/Fonts/Helvetica.ttc",
-              "/System/Library/Fonts/Arial.ttf"]:
-        try: return ImageFont.truetype(p, size)
-        except OSError: pass
-    return ImageFont.load_default()
 
 
 def _bilateral_smooth(img_bgr: np.ndarray, passes: int = 4) -> np.ndarray:

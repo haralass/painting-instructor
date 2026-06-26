@@ -545,8 +545,8 @@ class TestEdgeRegionIDMapping:
         from backend.analysis.edges import extract_edge_hierarchy
         (label_maps, regions), cache = self._make_hierarchy()
         region_id_set = {r.id for r in regions}
-        lm = label_maps.get("l3") or label_maps.get("l4") or list(label_maps.values())[0]
         edge_scale = next(k for k in ["l3", "l4", "l2", "l5", "l1"] if k in label_maps)
+        lm = label_maps[edge_scale]
         mapping = {r.source_label: r.id for r in regions if r.scale == edge_scale}
         edges, _ = extract_edge_hierarchy(cache, lm, label_to_region_id=mapping)
         for e in edges:

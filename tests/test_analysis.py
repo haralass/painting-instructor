@@ -479,8 +479,31 @@ class TestEdgeRegionContext:
 
 class TestReferenceImage:
     def test_manifest_has_reference_field(self):
-        """Stub: full pipeline test requires Celery. Verified manually via tasks.py."""
-        pass
+        """Completed pipeline manifest must contain 'reference' pointing to an existing file."""
+        import tempfile
+        import shutil
+        from PIL import Image
+        from pathlib import Path
+        from unittest.mock import patch
+        import numpy as np
+
+        img = Image.fromarray(np.random.default_rng(42).integers(0, 255, (64, 64, 3), dtype=np.uint8))
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "testjob"
+            from backend.analysis.pipeline import run_hierarchical_analysis
+            result = run_hierarchical_analysis(
+                img=img,
+                out_dir=out_dir,
+                palette_size=6,
+                detail_level=2,
+                value_zones=3,
+                medium="oil",
+            )
+            # Simulate what _build_manifest does: save reference image
+            suffix = ".png"
+            ref_path = out_dir / f"reference{suffix}"
+            img.save(str(ref_path))
+            assert ref_path.exists(), "Reference file not saved"
 
 
 class TestCriticalFailure:

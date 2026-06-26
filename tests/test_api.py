@@ -192,6 +192,28 @@ class TestGetJob:
             body = res.json()
             assert body["status"] in valid, f"state={celery_state} produced invalid status={body['status']!r}"
 
+    def test_analysis_ready_flag_in_progress_response(self):
+        """When step is analysis_ready, API must set analysis_ready=True."""
+        with patch("celery.result.AsyncResult") as MockResult:
+            instance = MockResult.return_value
+            instance.state = "PROGRESS"
+            instance.info  = {"step": "analysis_ready", "progress": 80, "message": "Analysis complete — generating extras"}
+            res = client.get(f"/jobs/{uuid.uuid4()}")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["analysis_ready"] is True
+
+    def test_analysis_ready_false_when_early_step(self):
+        """analysis_ready must be False when progress is below 80 and step is not in the ready set."""
+        with patch("celery.result.AsyncResult") as MockResult:
+            instance = MockResult.return_value
+            instance.state = "PROGRESS"
+            instance.info  = {"step": "notan", "progress": 25, "message": "Mapping values"}
+            res = client.get(f"/jobs/{uuid.uuid4()}")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["analysis_ready"] is False
+
 
 class TestMediumsEndpoint:
     def test_list_mediums_returns_all_five(self):

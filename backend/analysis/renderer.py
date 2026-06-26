@@ -61,10 +61,18 @@ def render_detail_levels(
     zone_map: np.ndarray,
     outline_composites: dict[str, np.ndarray],
     out_dir,
+    edges=None,  # list[Edge] | None — for edge_ids per level
 ) -> dict[str, DetailLevel]:
     """
     Render 5 detail levels to disk and return a DetailLevel dict keyed by str level.
     Uses LUT-based rendering (O(H*W) per level, not O(N*H*W)).
+
+    Outline complexity per level:
+      1: primary only
+      2: primary only (simplified)
+      3: primary + secondary
+      4: primary + secondary + decorative
+      5: all (including texture)
     """
     from pathlib import Path
     out_dir = Path(out_dir)
@@ -108,6 +116,19 @@ def render_detail_levels(
 
         region_ids = [r.id for r in active_regions]
 
+        # ── Edge IDs for this level (complexity filter) ────────────────────
+        _LEVEL_EDGE_TYPES = {
+            1: {"primary"},
+            2: {"primary"},
+            3: {"primary", "secondary"},
+            4: {"primary", "secondary", "decorative"},
+            5: {"primary", "secondary", "decorative", "texture"},
+        }
+        allowed_types = _LEVEL_EDGE_TYPES[lvl]
+        edge_ids: list[int] = []
+        if edges is not None:
+            edge_ids = [e.id for e in edges if e.type in allowed_types]
+
         # ── Outlines PNG ───────────────────────────────────────────────────
         outline_arr = outline_composites.get(outline_key, np.full((H, W), 255, dtype=np.uint8))
         outline_pil = Image.fromarray(outline_arr)
@@ -136,6 +157,7 @@ def render_detail_levels(
             level=lvl,
             label=_LEVEL_LABELS[lvl],
             region_ids=region_ids,
+            edge_ids=edge_ids,
             outlines=outline_path,
             values=value_path,
             colours=colour_path,

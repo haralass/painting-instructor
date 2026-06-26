@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef, DragEvent, ChangeEvent } from "react";
+import { useState, useRef, useEffect, DragEvent, ChangeEvent } from "react";
 import { useRouter } from "next/navigation";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -32,9 +32,23 @@ export default function HomePage() {
   const [paletteSize, setPaletteSize] = useState(12);
   const [detailLevel, setDetailLevel] = useState(3);
   const [valueZones,  setValueZones]  = useState<3 | 5 | 7>(5);
+  const [textureDetail, setTextureDetail] = useState(true);
+  const [bgDetail,      setBgDetail]      = useState(false);
   const [dragging,    setDragging]    = useState(false);
   const [loading,     setLoading]     = useState(false);
   const [error,       setError]       = useState<string | null>(null);
+
+  useEffect(() => {
+    const api = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    fetch(`${api}/mediums/${medium}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data) return;
+        setPaletteSize(data.recommended_palette_size ?? paletteSize);
+        setValueZones(data.recommended_value_zones ?? valueZones);
+      })
+      .catch(() => {});
+  }, [medium]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleFile(f: File) {
     if (!f.type.startsWith("image/")) {
@@ -69,6 +83,8 @@ export default function HomePage() {
       form.append("palette_size", String(paletteSize));
       form.append("detail_level", String(detailLevel));
       form.append("value_zones",  String(valueZones));
+      form.append("texture_detail",    String(textureDetail));
+      form.append("background_detail", String(bgDetail));
 
       const res = await fetch(`${API}/jobs/`, { method: "POST", body: form });
       if (!res.ok) {
@@ -219,6 +235,31 @@ export default function HomePage() {
           {selectedDetail && (
             <p className="text-xs mt-2" style={{ color: "var(--text-dim)" }}>{selectedDetail.desc}</p>
           )}
+        </div>
+
+        {/* Texture + background detail toggles */}
+        <div className="flex gap-6">
+          {[
+            { label: "Texture edges",    checked: textureDetail, set: setTextureDetail,
+              tip: "Include high-frequency texture contours (fabric, bark, fur)." },
+            { label: "Background edges", checked: bgDetail,      set: setBgDetail,
+              tip: "Analyse edges behind the main subject." },
+          ].map(({ label, checked, set, tip }) => (
+            <label key={label} className="flex items-center gap-3 cursor-pointer select-none">
+              <button
+                role="switch" aria-checked={checked}
+                onClick={() => set(!checked)}
+                className="relative w-10 h-6 rounded-full transition-colors"
+                style={{ background: checked ? "var(--accent)" : "var(--surface)", border: "1px solid var(--border)" }}>
+                <span className="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform"
+                      style={{ transform: checked ? "translateX(16px)" : "translateX(0)" }} />
+              </button>
+              <span className="text-sm" style={{ color: checked ? "var(--text)" : "var(--text-dim)" }}>
+                {label}
+              </span>
+              <span className="hidden sm:inline text-xs" style={{ color: "var(--text-dim)" }}>{tip}</span>
+            </label>
+          ))}
         </div>
 
         {/* Error */}

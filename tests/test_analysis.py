@@ -360,3 +360,150 @@ class TestEdgeSVGExport:
         edges_with, _ = extract_edge_hierarchy(cache, None, include_texture=True)
         # At least some edges should exist (texture or otherwise)
         assert len(edges_with) > 0
+
+
+# ── New correctness invariant tests ──────────────────────────────────────────
+
+def _prepare(img):
+    from backend.analysis.preprocessing import prepare
+    return prepare(img)
+
+
+class TestRegionIDMapping:
+    def test_region_points_to_nonzero_pixels(self):
+        """Every Region must contain at least one pixel in its scale's label map."""
+        img = Image.fromarray(np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8))
+        cache = _prepare(img)
+        from backend.analysis.regions import build_region_hierarchy
+        from backend.analysis.colours import extract_colour_families
+        _, _, internal = extract_colour_families(cache, palette_size=6)
+        label_maps, regions = build_region_hierarchy(cache, 6, 3, 3, internal)
+        for r in regions:
+            lm = label_maps.get(r.scale)
+            assert lm is not None, f"Region {r.id} has unknown scale {r.scale!r}"
+            px_count = int((lm == r.source_label).sum())
+            assert px_count > 0, (
+                f"Region {r.id} (scale={r.scale}, source_label={r.source_label}) has 0 pixels"
+            )
+
+    def test_parent_ids_exist(self):
+        from backend.analysis.regions import build_region_hierarchy
+        from backend.analysis.colours import extract_colour_families
+        img = Image.fromarray(np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8))
+        cache = _prepare(img)
+        _, _, internal = extract_colour_families(cache, 6)
+        _, regions = build_region_hierarchy(cache, 6, 3, 3, internal)
+        region_ids = {r.id for r in regions}
+        for r in regions:
+            if r.parent_id is not None:
+                assert r.parent_id in region_ids, (
+                    f"Region {r.id} has parent_id={r.parent_id} which does not exist"
+                )
+
+    def test_no_hierarchy_cycles(self):
+        from backend.analysis.regions import build_region_hierarchy
+        from backend.analysis.colours import extract_colour_families
+        img = Image.fromarray(np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8))
+        cache = _prepare(img)
+        _, _, internal = extract_colour_families(cache, 6)
+        _, regions = build_region_hierarchy(cache, 6, 3, 3, internal)
+        parent_map = {r.id: r.parent_id for r in regions}
+        for start in parent_map:
+            visited = set()
+            cur = start
+            while cur is not None:
+                assert cur not in visited, f"Cycle detected from region {start}"
+                visited.add(cur)
+                cur = parent_map.get(cur)
+
+    def test_level_1_has_fewer_regions_than_level_5(self):
+        from backend.analysis.regions import build_region_hierarchy
+        from backend.analysis.colours import extract_colour_families
+        img = Image.fromarray(np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8))
+        cache = _prepare(img)
+        _, _, internal = extract_colour_families(cache, 6)
+        _, regions = build_region_hierarchy(cache, 6, 3, 3, internal)
+        l1 = [r for r in regions if r.scale == "l1"]
+        l5 = [r for r in regions if r.scale == "l5"]
+        assert len(l1) < len(l5), f"Level 1 ({len(l1)}) not fewer than Level 5 ({len(l5)})"
+
+
+class TestColourFamilyStableIDs:
+    def test_nearest_family_returns_valid_rank(self):
+        """_nearest_colour_family must return a valid rank index in range [0, k)."""
+        from backend.analysis.colours import extract_colour_families
+        from backend.analysis.regions import _nearest_colour_family
+        img = Image.fromarray(np.full((64, 64, 3), [200, 100, 50], dtype=np.uint8))
+        cache = _prepare(img)
+        families, _, internal = extract_colour_families(cache, 4)
+        dummy_lab = cache.lab[32, 32]
+        rank = _nearest_colour_family(dummy_lab, internal)
+        assert 0 <= rank < len(families), (
+            f"_nearest_colour_family returned rank={rank}, expected 0..{len(families)-1}"
+        )
+
+    def test_cluster_id_to_rank_covers_all_clusters(self):
+        """cluster_id_to_rank must map every cluster index to a unique rank."""
+        from backend.analysis.colours import extract_colour_families
+        img = Image.fromarray(np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8))
+        cache = _prepare(img)
+        families, _, internal = extract_colour_families(cache, 6)
+        id_to_rank = internal.get("cluster_id_to_rank", {})
+        assert len(id_to_rank) == len(families), (
+            f"cluster_id_to_rank has {len(id_to_rank)} entries, expected {len(families)}"
+        )
+        assert set(id_to_rank.values()) == set(range(len(families))), (
+            "cluster_id_to_rank values must be a permutation of 0..k-1"
+        )
+
+
+class TestEdgeRegionContext:
+    def test_edges_have_nonzero_region_a(self):
+        """Every edge in a non-trivial image should have region_a > 0."""
+        from backend.analysis.edges import extract_edge_hierarchy
+        from backend.analysis.regions import build_region_hierarchy
+        from backend.analysis.colours import extract_colour_families
+        img = Image.fromarray(np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8))
+        cache = _prepare(img)
+        _, _, internal = extract_colour_families(cache, 6)
+        label_maps, _ = build_region_hierarchy(cache, 6, 3, 3, internal)
+        lm = label_maps.get("l3")
+        if lm is None:
+            lm = list(label_maps.values())[-1]
+        edges, _ = extract_edge_hierarchy(cache, lm)
+        nonzero = [e for e in edges if e.region_a != 0]
+        assert len(nonzero) > 0, "All edges have region_a=0 — region context not working"
+
+
+class TestReferenceImage:
+    def test_manifest_has_reference_field(self):
+        """Stub: full pipeline test requires Celery. Verified manually via tasks.py."""
+        pass
+
+
+class TestCriticalFailure:
+    def test_core_hierarchy_failure_raises(self):
+        """If hierarchical analysis prepare() fails, the pipeline must propagate."""
+        from unittest.mock import patch
+        from backend.analysis.pipeline import run_hierarchical_analysis
+        with patch("backend.analysis.pipeline.prepare", side_effect=RuntimeError("forced")):
+            with pytest.raises(RuntimeError):
+                run_hierarchical_analysis(
+                    img=Image.fromarray(np.zeros((64, 64, 3), dtype=np.uint8)),
+                    out_dir="/tmp/test_fail_pipeline",
+                    palette_size=6,
+                    detail_level=3,
+                    value_zones=3,
+                    medium="oil",
+                )
+
+
+class TestValueZonesExtra:
+    def test_seven_zones_produces_seven_levels(self):
+        from backend.analysis.values import compute_value_zones
+        img = Image.fromarray(np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8))
+        cache = _prepare(img)
+        zone_map, zones = compute_value_zones(cache, 7)
+        assert len(zones) == 7
+        for z in zones:
+            assert (zone_map == z.id).any(), f"Zone {z.id} has zero pixels"

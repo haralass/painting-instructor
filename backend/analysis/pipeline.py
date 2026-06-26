@@ -69,17 +69,29 @@ def run_hierarchical_analysis(
         f.linked_region_ids = [r.id for r in regions if r.colour_family_id == f.id]
 
     # ── 4. Edge hierarchy ─────────────────────────────────────────────────────
-    # Use finest available label map for edge context
+    # Use l3/l4 for edge context (good structural detail)
     label_map_for_edges = None
-    for sc in ["micro", "fine", "medium", "coarse"]:
+    edge_scale = None
+    for sc in ["l3", "l4", "l2", "l5", "l1"]:
         if sc in label_maps:
             label_map_for_edges = label_maps[sc]
+            edge_scale = sc
             break
+
+    # Build label→region_id mapping for the chosen scale
+    label_to_region_id: dict[int, int] = {}
+    if edge_scale is not None:
+        label_to_region_id = {
+            r.source_label: r.id
+            for r in regions
+            if r.scale == edge_scale
+        }
 
     edges, edge_maps = extract_edge_hierarchy(
         cache, label_map_for_edges, fg_mask,
         include_texture=texture_detail,
         include_background=background_detail,
+        label_to_region_id=label_to_region_id,
     )
     outline_composites = render_outline_levels(edge_maps)
 
@@ -134,14 +146,16 @@ def run_hierarchical_analysis(
         }
 
     return {
-        "detail_levels":    {k: _lvl_dict(v) for k, v in detail_levels.items()},
-        "palette":          [p.model_dump() for p in palette],
-        "colour_families":  [f.model_dump() for f in families],
-        "value_zone_list":  [z.model_dump() for z in zones],
-        "n_regions":        len(regions),
-        "n_edges":          len(edges),
-        "value_zones_path": zone_map_path,
-        "regions_json":     str(regions_path),
-        "edges_json":       str(edges_path),
-        "edges_svg":        str(svg_path),
+        "detail_levels":       {k: _lvl_dict(v) for k, v in detail_levels.items()},
+        "palette":             [p.model_dump() for p in palette],
+        "colour_families":     [f.model_dump() for f in families],
+        "value_zone_list":     [z.model_dump() for z in zones],
+        "n_regions":           len(regions),
+        "n_edges":             len(edges),
+        "value_zones_path":    zone_map_path,
+        "regions_json":        str(regions_path),
+        "edges_json":          str(edges_path),
+        "edges_svg":           str(svg_path),
+        "edge_scale":          edge_scale,
+        "label_to_region_id":  label_to_region_id,
     }

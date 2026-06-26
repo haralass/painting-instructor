@@ -498,6 +498,37 @@ class TestCriticalFailure:
                 )
 
 
+def test_pipeline_edge_map_not_none():
+    """run_hierarchical_analysis must pass a non-null label_map to extract_edge_hierarchy."""
+    from unittest.mock import patch
+    import numpy as np
+    from PIL import Image
+    from pathlib import Path
+    from backend.analysis.pipeline import run_hierarchical_analysis
+
+    img = Image.fromarray(np.random.default_rng(42).integers(0, 255, (64, 64, 3), dtype=np.uint8))
+    received_maps = []
+
+    original_fn = __import__('backend.analysis.edges', fromlist=['extract_edge_hierarchy']).extract_edge_hierarchy
+
+    def capturing_fn(cache, label_map, *args, **kwargs):
+        received_maps.append(label_map)
+        return original_fn(cache, label_map, *args, **kwargs)
+
+    with patch('backend.analysis.pipeline.extract_edge_hierarchy', side_effect=capturing_fn):
+        run_hierarchical_analysis(
+            img=img,
+            out_dir=Path('/tmp/test_edge_pipeline'),
+            palette_size=6,
+            detail_level=3,
+            value_zones=3,
+            medium='oil',
+        )
+
+    assert len(received_maps) > 0
+    assert received_maps[0] is not None, "label_map_for_edges was None — edge analysis received no region context"
+
+
 class TestValueZonesExtra:
     def test_seven_zones_produces_seven_levels(self):
         from backend.analysis.values import compute_value_zones

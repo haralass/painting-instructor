@@ -138,6 +138,12 @@ def run_pipeline(
     progress("loading")
     img = load_image(img_path)
     pages: list[str] = []
+    suffix = Path(img_path).suffix or ".jpg"
+
+    # Copy original reference image to output directory
+    import shutil
+    ref_path = str(out_dir / f"reference{suffix}")
+    shutil.copy2(img_path, ref_path)
 
     # ── Step 2: Line art ──────────────────────────────────────────────────────
     la_result, fg_mask = None, None
@@ -276,6 +282,7 @@ def run_pipeline(
         hier=hier,
         timings=timings,
         errors=errors,
+        ref_suffix=suffix,
     )
     manifest_path = out_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2))
@@ -308,6 +315,7 @@ def _build_manifest(
     hier: dict,
     timings: dict,
     errors: dict,
+    ref_suffix: str = ".jpg",
 ) -> dict:
     w, h = img.size
     base = f"outputs/{job_id}"
@@ -328,6 +336,7 @@ def _build_manifest(
             "value_zones":  value_zones,
         },
         "image": {"width": w, "height": h},
+        "reference": f"{job_id}/reference{ref_suffix}",
         "pages": classic_pages,
         "detail_levels": hier.get("detail_levels", {}),
         "palette":        hier.get("palette", []),

@@ -73,11 +73,11 @@ class DetailLevel(BaseModel):
 
 class AnalysisManifest(BaseModel):
     job_id: str
-    input: dict
-    image: dict
-    palette: list[PaletteEntry] = []
-    colour_families: list[ColourFamily] = []
-    value_zones: list[ValueZone] = []
-    detail_levels: dict[str, DetailLevel] = {}
+    input: dict = Field(default_factory=dict)
+    image: dict = Field(default_factory=dict)
+    palette: list[PaletteEntry]             = Field(default_factory=list)
+    colour_families: list[ColourFamily]     = Field(default_factory=list)
+    value_zones: list[ValueZone]            = Field(default_factory=list)
+    detail_levels: dict[str, DetailLevel]   = Field(default_factory=dict)
     video: Optional[str] = None
-    pdf: Optional[str] = None
+    pdf:   Optional[str] = None

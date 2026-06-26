@@ -1,5 +1,4 @@
 from __future__ import annotations
-import cv2
 import numpy as np
 from scipy.ndimage import label as scipy_label
 
@@ -57,29 +56,35 @@ def compute_value_zones(cache: ImageCache, n_zones: int) -> tuple[np.ndarray, li
 
 
 def _cleanup_zone_map(zone_map: np.ndarray, n_zones: int) -> np.ndarray:
-    """Absorb tiny zone patches into their most-shared adjacent zone."""
+    """Absorb tiny zone patches into their nearest large-component zone.
+
+    Uses distance_transform_edt to assign each tiny-component pixel to the
+    zone of its nearest non-tiny pixel — O(P×Z) total instead of the previous
+    O(K×P) per-component cv2.dilate loop (K could be 10k+ on noisy images).
+    """
+    from scipy.ndimage import distance_transform_edt
+
     min_px = max(50, zone_map.size // 2000)
-    result = zone_map.copy()
+
+    # Mark all tiny-component pixels across all zones
+    is_tiny = np.zeros(zone_map.shape, dtype=bool)
     for z in range(n_zones):
-        binary = (zone_map == z).astype(np.uint8)
-        labeled, n = scipy_label(binary)
+        labeled, n = scipy_label((zone_map == z).astype(np.uint8))
         if n == 0:
             continue
         sizes = np.bincount(labeled.ravel())
-        for comp in range(1, n + 1):
-            if sizes[comp] >= min_px:
-                continue
-            comp_mask = labeled == comp
-            # Find the zone that borders this component most
-            dilated = cv2.dilate(comp_mask.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
-            border_pixels = dilated & ~comp_mask
-            if not border_pixels.any():
-                continue
-            border_zones = result[border_pixels]
-            counts = np.bincount(border_zones.astype(np.int64), minlength=n_zones)
-            counts[z] = 0  # don't reassign to itself
-            best = int(counts.argmax())
-            result[comp_mask] = best
+        tiny_ids = np.where((sizes < min_px) & (np.arange(len(sizes)) > 0))[0]
+        if len(tiny_ids):
+            is_tiny |= np.isin(labeled, tiny_ids)
+
+    not_tiny = ~is_tiny
+    if not is_tiny.any() or not not_tiny.any():
+        # Nothing to clean up, or all pixels are tiny (no stable anchors — skip)
+        return zone_map
+
+    result = zone_map.copy()
+    _, indices = distance_transform_edt(is_tiny, return_indices=True)
+    result[is_tiny] = zone_map[indices[0][is_tiny], indices[1][is_tiny]]
     return result
 
 

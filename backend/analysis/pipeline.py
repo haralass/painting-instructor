@@ -61,6 +61,8 @@ def run_hierarchical_analysis(
         n_value_zones=value_zones,
         value_colour_families=colour_internal,
         seed=seed,
+        zone_map=zone_map,
+        zones=zones,
     )
 
     # Assign value_zone region_ids back to zone objects

@@ -18,36 +18,35 @@ def _font(size: int) -> ImageFont.FreeTypeFont:
 def notan(img: Image.Image, zones: int = 3) -> Image.Image:
     """
     Notan value study — the first thing every artist does.
-    Uses LAB L-channel (perceptual luminance) for accurate zone boundaries.
-    zones=2: shadow / light  (pure Notan)
+    Uses LAB L* channel (perceptual luminance) for accurate zone boundaries.
+    zones=2: shadow / light
     zones=3: shadow / midtone / light  (standard)
     zones=5: shadow / low-mid / midtone / high-mid / highlight
+    zones=7: seven evenly-spaced perceptual zones
+
+    Thresholds are adaptive: derived from the image histogram so that
+    each zone contains roughly equal visual area.
     """
     arr = np.array(img.convert("RGB"), dtype=np.float32) / 255.0
-    L   = skcolor.rgb2lab(arr)[:, :, 0]   # 0-100
+    L   = skcolor.rgb2lab(arr)[:, :, 0]   # L* in [0, 100]
 
-    cuts_2 = [50]
-    cuts_3 = [33, 67]
-    cuts_5 = [20, 40, 60, 80]
-    cuts   = {2: cuts_2, 3: cuts_3, 5: cuts_5}.get(zones, cuts_3)
+    # Adaptive thresholds: equal-quantile splits on the L histogram
+    flat = L.ravel()
+    quantiles = np.linspace(0, 100, zones + 1)
+    cuts = [float(np.percentile(flat, q)) for q in quantiles]
+    # Ensure strict ordering and clamp to [0, 100]
+    cuts[0]  = 0.0
+    cuts[-1] = 100.0
 
-    values_5 = [
-        (15,  15,  15),   # shadow
-        (60,  60,  60),   # low midtone
-        (120, 120, 120),  # midtone
-        (185, 185, 185),  # high midtone
-        (240, 240, 240),  # highlight
-    ]
-    # pick evenly-spaced values for requested zone count
-    step = 5 // zones
-    tones = [values_5[i*step] for i in range(zones)]
+    # Perceptual grey tones from shadow to highlight
+    gray_values = [int(round(15 + 225 * i / (zones - 1))) for i in range(zones)]
 
     H, W = L.shape
     out  = np.zeros((H, W, 3), dtype=np.uint8)
-    thresholds = [0.0] + [c for c in cuts] + [100.0]
-    for i, tone in enumerate(tones):
-        lo, hi = thresholds[i], thresholds[i+1]
-        out[(L >= lo) & (L < hi)] = tone
+    for i, gv in enumerate(gray_values):
+        lo, hi = cuts[i], cuts[i + 1]
+        mask = (L >= lo) & (L < hi) if i < zones - 1 else (L >= lo)
+        out[mask] = (gv, gv, gv)
 
     return Image.fromarray(out)
 
@@ -80,51 +79,69 @@ def color_palette(img: Image.Image, n_colors: int = 32) -> Image.Image:
 
 def color_temperature(img: Image.Image) -> Image.Image:
     """
-    Per-pixel warm/cool map using LAB b-channel (Gurney method).
-    b > 0  → warm (yellow-orange light)
-    b < 0  → cool (blue shadow)
-    b ≈ 0  → neutral
-    Overlay warm=orange, cool=blue at 55% opacity over greyscale.
+    Per-pixel colour temperature approximation.
+
+    Uses LAB b* channel (index 2, blue-yellow axis) combined with a*
+    (index 1, green-red axis) and luminance to classify pixels:
+      warm  → b* > threshold  (yellow/orange biased)
+      cool  → b* < -threshold (blue biased)
+      neutral → low chroma (|a*| and |b*| small)
+
+    This is an approximation, not absolute scientific classification —
+    labelled as "Colour temperature approximation" accordingly.
     """
     arr     = np.array(img.convert("RGB"), dtype=np.float32) / 255.0
     lab     = skcolor.rgb2lab(arr)
-    b_ch    = lab[:, :, 1]          # b-channel: warm+ cool-
-    gray    = skcolor.rgb2gray(arr) # perceptual grey
+    # LAB channels: 0=L*, 1=a* (green−red), 2=b* (blue−yellow)
+    a_ch    = lab[:, :, 1]   # a*: negative=green, positive=red
+    b_ch    = lab[:, :, 2]   # b*: negative=blue,  positive=yellow/warm
+    chroma  = np.hypot(a_ch, b_ch)
+
+    gray    = skcolor.rgb2gray(arr)
 
     H, W    = b_ch.shape
     overlay = np.zeros((H, W, 3), dtype=np.float32)
-    warm_c  = np.array([1.0, 0.42, 0.0])   # orange
-    cool_c  = np.array([0.0, 0.47, 1.0])   # blue
+    warm_c  = np.array([1.0, 0.42, 0.0])    # orange
+    cool_c  = np.array([0.0, 0.47, 1.0])    # blue
     neut_c  = np.array([0.75, 0.75, 0.75])
 
-    t_norm  = np.clip(b_ch / 60.0, -1.0, 1.0)   # -1=cool, +1=warm
-    warm_m  = t_norm > 0.1
-    cool_m  = t_norm < -0.1
-    neut_m  = ~warm_m & ~cool_m
+    # Low chroma → neutral regardless of hue angle
+    neutral_threshold = 8.0   # LAB chroma units
+    warm_threshold    = 4.0   # b* units above zero
+
+    neut_m = chroma < neutral_threshold
+    warm_m = ~neut_m & (b_ch > warm_threshold)
+    cool_m = ~neut_m & ~warm_m
 
     overlay[warm_m] = warm_c
     overlay[cool_m] = cool_c
     overlay[neut_m] = neut_c
 
-    gray3   = np.stack([gray]*3, axis=-1)
+    gray3   = np.stack([gray] * 3, axis=-1)
     blended = np.clip(gray3 * 0.45 + overlay * 0.55, 0, 1)
 
     # legend bar
     leg_h  = 30
     legend = np.zeros((leg_h, W, 3), dtype=np.uint8)
     for px in range(W):
-        t = px / W * 2 - 1   # -1 to +1
+        t = px / W * 2 - 1   # −1 to +1
         c = cool_c if t < 0 else warm_c
-        legend[:, px] = (abs(t) * c + (1-abs(t)) * np.array([0.75]*3)) * 255
+        legend[:, px] = (abs(t) * c + (1 - abs(t)) * np.array([0.75] * 3)) * 255
 
     leg_img = Image.fromarray(legend)
     dr_leg  = ImageDraw.Draw(leg_img)
     fn_leg  = _font(9)
-    dr_leg.text((4, 9),      "COOL (shadows)", fill=(255,255,255), font=fn_leg)
-    dr_leg.text((W - 115, 9), "WARM (lights)", fill=(255,255,255), font=fn_leg)
+    dr_leg.text((4, 9),        "COOL (blue shadows)", fill=(255, 255, 255), font=fn_leg)
+    dr_leg.text((W - 135, 9),  "WARM (yellow/orange light)", fill=(255, 255, 255), font=fn_leg)
+
+    title_h  = 22
+    title_bar = np.full((title_h, W, 3), 30, dtype=np.uint8)
+    title_img = Image.fromarray(title_bar)
+    dr_title  = ImageDraw.Draw(title_img)
+    dr_title.text((4, 4), "Colour temperature approximation (LAB b* + chroma)", fill=(200, 200, 200), font=_font(8))
 
     main = Image.fromarray((blended * 255).astype(np.uint8))
-    return Image.fromarray(np.vstack([np.array(main), np.array(leg_img)]))
+    return Image.fromarray(np.vstack([np.array(title_img), np.array(main), np.array(leg_img)]))
 
 
 def light_direction(img: Image.Image) -> Image.Image:

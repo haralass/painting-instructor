@@ -1,0 +1,25 @@
+# Heavy ML dependencies — install in addition to requirements.txt
+# CPU-only install:
+#   pip install -r requirements.txt -r requirements-ml.txt
+# GPU install:
+#   pip install -r requirements.txt -r requirements-ml.txt --extra-index-url https://download.pytorch.org/whl/cu121
+
+# PyTorch — CPU by default; override with GPU index URL if needed
+torch>=2.2
+torchvision>=0.17
+
+# Background removal (BiRefNet via rembg)
+# Use rembg without [gpu] to avoid onnxruntime-gpu conflicts on CPU machines
+rembg>=2.0.50
+
+# ONNX runtime for controlnet_aux (CPU build — safe on any machine)
+onnxruntime>=1.18
+
+# Line art detector (informative-drawings CVPR 2022)
+controlnet-aux>=0.0.7
+
+# Face parsing (BiSeNet) — optional; pipeline falls back gracefully if absent
+facexlib>=0.3.0
+
+# Image quality check (BRISQUE)
+pyiqa>=0.1.10

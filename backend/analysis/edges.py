@@ -118,10 +118,6 @@ def extract_edge_hierarchy(
         if bg_mask is not None:
             in_bg = bool(bg_mask[ys, xs].mean() > 0.5)
 
-        # Skip background edges when include_background=False
-        if not include_background and in_bg:
-            continue
-
         # Sample neighbouring regions using offsets around contour midpoint
         ra_raw: int | None = None
         rb_raw: int | None = None
@@ -147,26 +143,55 @@ def extract_edge_hierarchy(
         # Use region stats for colour difference classification
         # label_stats is keyed by RAW label values
         colour_diff = 0.0
+        area_a = 0
+        area_b = 0
+        if ra_raw is not None and ra_raw in label_stats:
+            area_a = label_stats[ra_raw]["area"]
+        if rb_raw is not None and rb_raw in label_stats:
+            area_b = label_stats[rb_raw]["area"]
         if ra_raw is not None and rb_raw is not None and ra_raw in label_stats and rb_raw in label_stats:
             diff = label_stats[ra_raw]["mean_lab"] - label_stats[rb_raw]["mean_lab"]
             colour_diff = float(np.linalg.norm(diff)) / 100.0
 
-        importance = arc_norm * 0.6 + mean_grad * 0.4
-        if in_bg:
-            importance *= 0.3
+        # Compute composite weighted score using region area, colour and value diff
+        total_area = H * W
+        mean_region_area = total_area / max(1, len(label_stats)) if label_stats else total_area
+        area_score = min(1.0, (area_a + area_b) / (2 * mean_region_area + 1))
 
-        if arc_norm > 0.12 or mean_grad > 0.7:
+        value_diff_norm = 0.0
+        if ra_raw is not None and rb_raw is not None and ra_raw in label_stats and rb_raw in label_stats:
+            la_mean = label_stats[ra_raw]["mean_lab"]
+            lb_mean = label_stats[rb_raw]["mean_lab"]
+            value_diff_norm = abs(float(la_mean[0]) - float(lb_mean[0])) / 100.0  # L* diff normalised
+
+        importance_bg = 0.3 if in_bg else 1.0
+
+        composite = (
+            arc_norm        * 0.25 +
+            mean_grad       * 0.25 +
+            colour_diff     * 0.20 +
+            value_diff_norm * 0.15 +
+            area_score      * 0.10 +
+            (1 - local_texture) * 0.05
+        ) * importance_bg
+
+        # Classification thresholds
+        if composite > 0.55 or (arc_norm > 0.10 and mean_grad > 0.45):
             etype = "primary"
-        elif arc_norm > 0.04 or mean_grad > 0.45:
+        elif composite > 0.30 or colour_diff > 0.35:
             etype = "secondary"
-        elif local_texture > 0.15 or arc < 20:
+        elif local_texture > 0.18 or arc < 20:
             etype = "texture"
         else:
             etype = "decorative"
 
-        # When include_texture=False, absorb texture edges into decorative
-        if not include_texture and etype == "texture":
-            etype = "decorative"
+        importance = composite  # store composite as importance (diagnostic)
+
+        if etype == "texture" and not include_texture:
+            continue   # do not append, do not draw
+
+        if in_bg and not include_background:
+            continue   # skip background edge entirely
 
         edges.append(Edge(
             id=eid,
@@ -185,10 +210,10 @@ def extract_edge_hierarchy(
             cv2.polylines(maps_primary, [draw_pts], False, 255, 1)
         elif etype == "secondary":
             cv2.polylines(maps_secondary, [draw_pts], False, 255, 1)
-        elif etype == "decorative":
-            cv2.polylines(maps_decorative, [draw_pts], False, 255, 1)
-        elif include_texture:
+        elif etype == "texture":
             cv2.polylines(maps_texture, [draw_pts], False, 255, 1)
+        else:
+            cv2.polylines(maps_decorative, [draw_pts], False, 255, 1)
 
     maps = {
         "primary":    maps_primary,

@@ -70,6 +70,29 @@ def build_region_hierarchy(
         return _trivial_fallback(cache, n_value_zones, value_colour_families)
 
 
+def _compute_region_targets(cache: ImageCache, n_base: int) -> list[int]:
+    """
+    Adaptive region targets based on image complexity, independent of palette size.
+    Uses gradient density as a proxy for structural complexity.
+    """
+    max_grad = float(cache.grad.max()) + 1e-6
+    grad_density = float((cache.grad / max_grad).mean())   # 0–1
+
+    # Lerp between simple and complex presets
+    simple   = [4,  8,  20,  60, 150]
+    complex_ = [8, 20,  60, 180, 400]
+    targets = [
+        max(s, min(c, int(s + (c - s) * grad_density)))
+        for s, c in zip(simple, complex_)
+    ]
+    # Never exceed n_base/3 for the finest level
+    targets[4] = min(targets[4], max(targets[3] + 2, n_base // 3))
+    # Ensure strictly increasing
+    for i in range(1, 5):
+        targets[i] = max(targets[i], targets[i - 1] + 2)
+    return targets
+
+
 def _build_merge_tree_hierarchy(
     cache: ImageCache,
     palette_size: int,
@@ -222,13 +245,7 @@ def _build_merge_tree_hierarchy(
         root_adj.pop(rb, None)
 
     # ── Define 5 cut points ───────────────────────────────────────────────────
-    cut_sizes = [
-        max(3, palette_size // 3),
-        max(5, palette_size),
-        max(8, palette_size * 2),
-        max(12, palette_size * 5),
-        max(20, min(palette_size * 12, n_actual)),
-    ]
+    cut_sizes = _compute_region_targets(cache, n_actual)
 
     # ── Produce label maps from merge sequence ────────────────────────────────
     level_label_maps = _cuts_to_label_maps(base_labels, merges, cut_sizes, n_actual, H, W)

@@ -159,7 +159,7 @@ def run_pipeline(
         log.warning("Pipeline step 'line_art' failed:\n%s", tb)
 
     # ── Step 3: Notan ─────────────────────────────────────────────────────────
-    notan_result = run("notan", lambda: notan(img, zones=min(value_zones, 5)))
+    notan_result = run("notan", lambda: notan(img, zones=value_zones))
     if notan_result:
         pages.append(save("notan", notan_result))
 

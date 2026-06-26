@@ -17,17 +17,16 @@ log = logging.getLogger(__name__)
 
 
 class _UnionFind:
-    """Union-Find with member tracking for merge-tree construction."""
+    """Union-Find with path compression for merge-tree construction."""
 
     def __init__(self, n: int) -> None:
         self.parent: list[int] = list(range(n))
         self.rank: list[int] = [0] * n
-        # Each node tracks the set of base SLIC labels it covers
-        self.members: dict[int, set[int]] = {i: {i} for i in range(n)}
+        # members dict removed — use _snapshot_label_map for pixel→root snapshots
 
     def find(self, x: int) -> int:
         while self.parent[x] != x:
-            self.parent[x] = self.parent[self.parent[x]]
+            self.parent[x] = self.parent[self.parent[x]]   # path compression
             x = self.parent[x]
         return x
 
@@ -35,11 +34,8 @@ class _UnionFind:
         rx, ry = self.find(x), self.find(y)
         if rx == ry:
             return
-        # Create new_id as the merged root
         self.parent.append(new_id)
         self.rank.append(0)
-        combined = self.members.get(rx, set()) | self.members.get(ry, set())
-        self.members[new_id] = combined
         self.parent[rx] = new_id
         self.parent[ry] = new_id
 

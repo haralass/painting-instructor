@@ -102,6 +102,7 @@ def run_hierarchical_analysis(
         zone_map=zone_map,
         outline_composites=outline_composites,
         out_dir=out_dir,
+        edges=edges,
     )
 
     # ── 6. Write regions JSON ─────────────────────────────────────────────────

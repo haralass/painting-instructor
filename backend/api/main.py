@@ -123,11 +123,19 @@ def get_job(job_id: str) -> JobResponse:
         return JobResponse(job_id=job_id, status="queued", progress=0, step="queued", message="Waiting to start")
 
     if state in ("STARTED", "PROGRESS"):
-        meta     = r.info or {}
-        progress = int(meta.get("progress", 5))
-        step     = str(meta.get("step", ""))
-        message  = str(meta.get("message", "Processing…"))
-        return JobResponse(job_id=job_id, status="processing", progress=progress, step=step, message=message)
+        meta        = r.info or {}
+        progress_n  = int(meta.get("progress", 5))
+        step        = str(meta.get("step", ""))
+        message     = str(meta.get("message", "Processing…"))
+        analysis_rdy = progress_n >= 80 or step in ("analysis_ready", "rendering_extras", "video", "pdf", "manifest")
+        return JobResponse(
+            job_id=job_id,
+            status="processing",
+            progress=progress_n,
+            step=step,
+            message=message,
+            analysis_ready=analysis_rdy,
+        )
 
     if state == "SUCCESS":
         result = r.result or {}

@@ -19,6 +19,7 @@ class JobResponse(BaseModel):
     progress: int = 0
     step: str = ""
     message: str = ""
+    analysis_ready: bool = False   # NEW — preliminary manifest available
     result: Optional[JobResult] = None
     error: Optional[str] = None
 

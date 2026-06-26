@@ -12,6 +12,7 @@ from .colours import extract_colour_families
 from .regions import build_region_hierarchy
 from .edges import extract_edge_hierarchy, render_outline_levels, export_edges_svg
 from .renderer import render_detail_levels
+from .models import _get_medium_strategy
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +37,8 @@ def run_hierarchical_analysis(
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    strategy = _get_medium_strategy(medium)
 
     cache = prepare(img)
 
@@ -87,9 +90,10 @@ def run_hierarchical_analysis(
             if r.scale == edge_scale
         }
 
+    effective_texture = texture_detail and strategy.include_texture_edges
     edges, edge_maps = extract_edge_hierarchy(
         cache, label_map_for_edges, fg_mask,
-        include_texture=texture_detail,
+        include_texture=effective_texture,
         include_background=background_detail,
         label_to_region_id=label_to_region_id,
     )
@@ -115,6 +119,7 @@ def run_hierarchical_analysis(
         outline_composites=outline_composites,
         out_dir=out_dir,
         edges=edges,
+        medium_strategy=strategy,    # NEW
     )
 
     # ── 6. Write regions JSON ─────────────────────────────────────────────────

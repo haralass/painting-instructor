@@ -1,6 +1,88 @@
 from __future__ import annotations
+from dataclasses import dataclass
 from typing import Optional
 from pydantic import BaseModel, Field
+
+
+@dataclass
+class MediumStrategy:
+    """
+    Rendering strategy derived from the selected painting medium.
+    Passed into render_detail_levels to alter visual output.
+    """
+    # Colour rendering
+    colour_alpha: float      # how saturated the flat-colour render is (0=white, 1=full)
+    greyscale_colours: bool  # True for pencil/charcoal — use grey tones instead of hue
+
+    # Value rendering
+    compress_values: bool    # True for charcoal — compress zones into fewer grey steps
+    value_contrast: float    # multiply zone grey values by this (>1 = higher contrast)
+
+    # Edge rendering
+    emphasise_primary: bool  # True for pencil — make primary edges thicker/darker
+    soften_secondary: bool   # True for oil/watercolour — reduce secondary edge opacity
+    include_texture_edges: bool  # False for watercolour — skip texture clutter
+
+    # Watercolour-specific
+    preserve_whites: bool    # True for watercolour — lighter regions stay near-white
+
+
+_MEDIUM_STRATEGIES: dict[str, MediumStrategy] = {
+    "oil": MediumStrategy(
+        colour_alpha=0.80,
+        greyscale_colours=False,
+        compress_values=False,
+        value_contrast=1.2,
+        emphasise_primary=False,
+        soften_secondary=True,
+        include_texture_edges=True,
+        preserve_whites=False,
+    ),
+    "watercolor": MediumStrategy(
+        colour_alpha=0.55,
+        greyscale_colours=False,
+        compress_values=False,
+        value_contrast=0.9,
+        emphasise_primary=False,
+        soften_secondary=True,
+        include_texture_edges=False,   # watercolour avoids texture clutter
+        preserve_whites=True,
+    ),
+    "acrylic": MediumStrategy(
+        colour_alpha=0.85,
+        greyscale_colours=False,
+        compress_values=False,
+        value_contrast=1.1,
+        emphasise_primary=False,
+        soften_secondary=False,
+        include_texture_edges=True,
+        preserve_whites=False,
+    ),
+    "pencil": MediumStrategy(
+        colour_alpha=0.40,
+        greyscale_colours=True,        # pencil shows value, not hue
+        compress_values=False,
+        value_contrast=1.3,
+        emphasise_primary=True,        # strong structural lines
+        soften_secondary=False,
+        include_texture_edges=True,
+        preserve_whites=False,
+    ),
+    "charcoal": MediumStrategy(
+        colour_alpha=0.30,
+        greyscale_colours=True,        # charcoal = tonal, not colour
+        compress_values=True,          # compress to fewer tonal masses
+        value_contrast=1.4,
+        emphasise_primary=True,
+        soften_secondary=False,
+        include_texture_edges=False,   # charcoal = mass, not texture
+        preserve_whites=False,
+    ),
+}
+
+
+def _get_medium_strategy(medium: str) -> MediumStrategy:
+    return _MEDIUM_STRATEGIES.get(medium, _MEDIUM_STRATEGIES["oil"])
 
 
 class Region(BaseModel):

@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from .models import DetailLevel, Region, ColourFamily, ValueZone
+from .models import DetailLevel, Region, ColourFamily, ValueZone, MediumStrategy
 from .preprocessing import ImageCache
 
 _LEVEL_LABELS = {
@@ -62,6 +62,7 @@ def render_detail_levels(
     outline_composites: dict[str, np.ndarray],
     out_dir,
     edges=None,  # list[Edge] | None — for edge_ids per level
+    medium_strategy: MediumStrategy | None = None,   # optional MediumStrategy
 ) -> dict[str, DetailLevel]:
     """
     Render 5 detail levels to disk and return a DetailLevel dict keyed by str level.
@@ -129,20 +130,40 @@ def render_detail_levels(
         if edges is not None:
             edge_ids = [e.id for e in edges if e.type in allowed_types]
 
+        # ── Apply medium strategy to outline composites (level-local copy) ──
+        effective_outlines = outline_composites
+        if medium_strategy is not None:
+            effective_outlines = dict(outline_composites)  # shallow copy — don't mutate original
+            if medium_strategy.emphasise_primary:
+                prim = effective_outlines.get("outlines_primary")
+                if prim is not None:
+                    edge_mask = (prim == 0).astype(np.uint8)
+                    kernel = np.ones((2, 2), np.uint8)
+                    thickened = cv2.dilate(edge_mask, kernel)
+                    effective_outlines["outlines_primary"] = np.where(thickened, 0, 255).astype(np.uint8)
+            if medium_strategy.soften_secondary:
+                sec = effective_outlines.get("outlines_primary_secondary")
+                if sec is not None:
+                    blended = np.clip(sec.astype(np.int32) + 60, 0, 255).astype(np.uint8)
+                    effective_outlines["outlines_primary_secondary"] = blended
+
         # ── Outlines PNG ───────────────────────────────────────────────────
-        outline_arr = outline_composites.get(outline_key, np.full((H, W), 255, dtype=np.uint8))
+        outline_arr = effective_outlines.get(outline_key, np.full((H, W), 255, dtype=np.uint8))
         outline_pil = Image.fromarray(outline_arr)
         outline_path = str(out_dir / f"level_{lvl}_outlines.png")
         outline_pil.save(outline_path)
 
         # ── Value map PNG ──────────────────────────────────────────────────
-        value_arr  = _render_value_lut(zone_map, value_zones, active_regions, label_maps, H, W)
+        value_arr  = _render_value_lut(zone_map, value_zones, active_regions, label_maps, H, W,
+                                       medium_strategy=medium_strategy)
         value_pil  = Image.fromarray(value_arr)
         value_path = str(out_dir / f"level_{lvl}_values.png")
         value_pil.save(value_path)
 
         # ── Flat colour PNG ────────────────────────────────────────────────
-        colour_arr  = _render_colour_lut(active_regions, families, label_maps, H, W, lvl)
+        colour_arr  = _render_colour_lut(active_regions, families, label_maps, H, W, lvl,
+                                         medium_strategy=medium_strategy,
+                                         zones=value_zones)
         colour_pil  = Image.fromarray(colour_arr)
         colour_path = str(out_dir / f"level_{lvl}_colours.png")
         colour_pil.save(colour_path)
@@ -174,13 +195,29 @@ def _render_value_lut(
     label_maps: dict[str, np.ndarray],
     H: int,
     W: int,
+    medium_strategy: MediumStrategy | None = None,
 ) -> np.ndarray:
-    # Build a zone_id → grey mapping
-    zone_grey = {z.id: z.grey_value for z in zones}
+    n = len(zones)
+
+    def _zone_grey(zone_idx: int) -> int:
+        """Return grey value for a zone index, applying medium strategy."""
+        if medium_strategy is not None and medium_strategy.compress_values and n > 0:
+            group = zone_idx * 3 // n   # 0, 1, or 2
+            grey = [30, 128, 220][group]
+        else:
+            # Find the zone with this id
+            matched = next((z for z in zones if z.id == zone_idx), None)
+            grey = matched.grey_value if matched is not None else 128
+        if medium_strategy is not None and medium_strategy.value_contrast != 1.0:
+            grey = int(np.clip((grey - 128) * medium_strategy.value_contrast + 128, 0, 255))
+        return grey
+
+    # Build a zone_id → adjusted grey mapping
+    zone_grey = {z.id: _zone_grey(z.id) for z in zones}
     # Start from zone_map
     out = np.full((H, W), 128, dtype=np.uint8)
     for z in zones:
-        out[zone_map == z.id] = z.grey_value
+        out[zone_map == z.id] = zone_grey[z.id]
 
     # Overlay active regions using their value_zone
     by_scale: dict[str, list[Region]] = defaultdict(list)
@@ -209,8 +246,14 @@ def _render_colour_lut(
     H: int,
     W: int,
     lvl: int,
+    medium_strategy: MediumStrategy | None = None,
+    zones: list[ValueZone] | None = None,
 ) -> np.ndarray:
-    alpha = min(0.35 + lvl * 0.12, 0.85)
+    if medium_strategy is not None:
+        alpha = medium_strategy.colour_alpha * (0.7 + lvl * 0.06)
+        alpha = min(alpha, 0.95)
+    else:
+        alpha = min(0.35 + lvl * 0.12, 0.85)
     bg = np.array([245, 245, 245], dtype=np.float32)
     out = np.full((H, W, 3), 245, dtype=np.uint8)
     if not families:
@@ -228,12 +271,32 @@ def _render_colour_lut(
         lut = np.full((max_lbl, 3), 245, dtype=np.uint8)
         for r in regs:
             if r.source_label < max_lbl:
-                cf_id = min(r.colour_family_id, len(families) - 1)
-                base = np.array(families[cf_id].base_rgb, dtype=np.float32)
-                tinted = np.clip(base * alpha + bg * (1 - alpha), 0, 255).astype(np.uint8)
-                lut[r.source_label] = tinted
+                if medium_strategy is not None and medium_strategy.greyscale_colours:
+                    # Use zone grey value instead of colour family hue
+                    zone_idx = r.value_zone
+                    if zones is not None:
+                        matched = next((z for z in zones if z.id == zone_idx), None)
+                        grey = matched.grey_value if matched is not None else 128
+                    else:
+                        grey = 128
+                    if medium_strategy.value_contrast != 1.0:
+                        grey = int(np.clip((grey - 128) * medium_strategy.value_contrast + 128, 0, 255))
+                    lut[r.source_label] = (grey, grey, grey)
+                else:
+                    cf_id = min(r.colour_family_id, len(families) - 1)
+                    base = np.array(families[cf_id].base_rgb, dtype=np.float32)
+                    tinted = np.clip(base * alpha + bg * (1 - alpha), 0, 255).astype(np.uint8)
+                    lut[r.source_label] = tinted
         clipped_lm = lm.clip(0, max_lbl - 1)
         out = np.where((lm < max_lbl)[:, :, None], lut[clipped_lm], out)
+
+    # Apply preserve_whites: force very light regions to near-white
+    if medium_strategy is not None and medium_strategy.preserve_whites:
+        for r in active_regions:
+            if r.mean_lab[0] > 80:   # very light region
+                lm = label_maps.get(r.scale)
+                if lm is not None and r.source_label < int(lm.max()) + 1:
+                    out[lm == r.source_label] = (248, 248, 248)
 
     return out
 

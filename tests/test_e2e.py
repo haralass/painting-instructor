@@ -52,10 +52,13 @@ def pipeline_result():
         orig_getcwd = os.getcwd
         os.chdir(tmpdir)
 
-        result = run_pipeline(
-            None,   # self=None for sync call
-            img_path=img_path,
-            job_id=job_id,
+        from unittest.mock import MagicMock
+        mock_self = MagicMock()
+        mock_self.update_state = MagicMock()
+        result = run_pipeline.__wrapped__(
+            mock_self,
+            img_path,
+            job_id,
             medium="oil",
             palette_size=6,
             detail_level=3,

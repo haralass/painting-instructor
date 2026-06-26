@@ -51,7 +51,7 @@ class ValueZone(BaseModel):
 
 class Edge(BaseModel):
     id: int
-    region_a: int
+    region_a: Optional[int] = None   # None means no region context available
     region_b: Optional[int] = None
     type: str           # "primary" | "secondary" | "decorative" | "texture"
     strength: float

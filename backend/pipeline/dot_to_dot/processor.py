@@ -5,14 +5,7 @@ from PIL import Image, ImageDraw, ImageFont
 from skimage.morphology import skeletonize
 import sknw
 
-
-def _font(size: int) -> ImageFont.FreeTypeFont:
-    for p in ["/System/Library/Fonts/HelveticaNeue.ttc",
-              "/System/Library/Fonts/Helvetica.ttc",
-              "/System/Library/Fonts/Arial.ttf"]:
-        try: return ImageFont.truetype(p, size)
-        except OSError: pass
-    return ImageFont.load_default()
+from ...utils.fonts import get_font as _font
 
 
 def _resample_polyline(pts: np.ndarray, n: int) -> np.ndarray:

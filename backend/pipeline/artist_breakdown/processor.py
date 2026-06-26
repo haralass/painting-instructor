@@ -5,14 +5,7 @@ from PIL import Image, ImageDraw, ImageFont
 from sklearn.cluster import MiniBatchKMeans
 from skimage import color as skcolor
 
-
-def _font(size: int) -> ImageFont.FreeTypeFont:
-    for p in ["/System/Library/Fonts/HelveticaNeue.ttc",
-              "/System/Library/Fonts/Helvetica.ttc",
-              "/System/Library/Fonts/Arial.ttf"]:
-        try: return ImageFont.truetype(p, size)
-        except OSError: pass
-    return ImageFont.load_default()
+from ...utils.fonts import get_font as _font
 
 
 def notan(img: Image.Image, zones: int = 3) -> Image.Image:

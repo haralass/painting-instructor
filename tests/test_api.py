@@ -191,3 +191,32 @@ class TestGetJob:
                 res = client.get(f"/jobs/{uuid.uuid4()}")
             body = res.json()
             assert body["status"] in valid, f"state={celery_state} produced invalid status={body['status']!r}"
+
+
+class TestMediumsEndpoint:
+    def test_list_mediums_returns_all_five(self):
+        res = client.get("/mediums/")
+        assert res.status_code == 200
+        data = res.json()
+        for m in ("oil", "watercolor", "acrylic", "pencil", "charcoal"):
+            assert m in data, f"medium {m!r} missing from /mediums/ response"
+
+    def test_list_mediums_has_recommended_settings(self):
+        res = client.get("/mediums/")
+        data = res.json()
+        oil = data["oil"]
+        assert "recommended_value_zones"  in oil
+        assert "recommended_palette_size" in oil
+
+    def test_get_medium_returns_stages(self):
+        for medium in ("oil", "watercolor", "acrylic", "pencil", "charcoal"):
+            res = client.get(f"/mediums/{medium}")
+            assert res.status_code == 200, f"{medium} endpoint failed"
+            data = res.json()
+            assert "stages"       in data
+            assert "instructions" in data
+            assert len(data["stages"]) > 0
+
+    def test_get_unknown_medium_returns_404(self):
+        res = client.get("/mediums/gouache")
+        assert res.status_code == 404

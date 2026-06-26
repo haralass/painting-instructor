@@ -13,6 +13,8 @@ def extract_edge_hierarchy(
     cache: ImageCache,
     label_map: np.ndarray | None,
     fg_mask: np.ndarray | None = None,
+    include_texture: bool = True,
+    include_background: bool = True,
 ) -> tuple[list[Edge], dict[str, np.ndarray]]:
     """
     Classify detected edges into four semantic levels:
@@ -89,6 +91,10 @@ def extract_edge_hierarchy(
         if bg_mask is not None:
             in_bg = bool(bg_mask[ys, xs].mean() > 0.5)
 
+        # Skip background edges when include_background=False
+        if not include_background and in_bg:
+            continue
+
         importance = arc_norm * 0.6 + mean_grad * 0.4
         if in_bg:
             importance *= 0.3
@@ -100,6 +106,10 @@ def extract_edge_hierarchy(
         elif local_texture > 0.15 or arc < 20:
             etype = "texture"
         else:
+            etype = "decorative"
+
+        # When include_texture=False, absorb texture edges into decorative
+        if not include_texture and etype == "texture":
             etype = "decorative"
 
         edges.append(Edge(
@@ -121,7 +131,7 @@ def extract_edge_hierarchy(
             cv2.polylines(maps_secondary, [draw_pts], False, 255, 1)
         elif etype == "decorative":
             cv2.polylines(maps_decorative, [draw_pts], False, 255, 1)
-        else:
+        elif include_texture:
             cv2.polylines(maps_texture, [draw_pts], False, 255, 1)
 
     maps = {
@@ -154,3 +164,29 @@ def render_outline_levels(maps: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         "outlines_detailed":          _composite("primary", "secondary", "decorative"),
         "outlines_full":              _composite("primary", "secondary", "decorative", "texture"),
     }
+
+
+def export_edges_svg(edges: list[Edge], width: int, height: int) -> str:
+    """
+    Export edge contours as an SVG string.
+    Types are styled distinctly for vector use.
+    """
+    type_style = {
+        "primary":    'stroke="#111111" stroke-width="2"',
+        "secondary":  'stroke="#333333" stroke-width="1.2"',
+        "decorative": 'stroke="#555555" stroke-width="0.8" stroke-dasharray="4 2"',
+        "texture":    'stroke="#888888" stroke-width="0.4"',
+    }
+    lines = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" '
+        f'width="{width}" height="{height}">',
+        '<rect width="100%" height="100%" fill="white"/>',
+    ]
+    for edge in edges:
+        if len(edge.path) < 2:
+            continue
+        style = type_style.get(edge.type, type_style["texture"])
+        pts   = " ".join(f"{float(p[0]):.1f},{float(p[1]):.1f}" for p in edge.path)
+        lines.append(f'  <polyline points="{pts}" fill="none" {style}/>')
+    lines.append("</svg>")
+    return "\n".join(lines)

@@ -313,3 +313,50 @@ class TestNotan:
         arr    = np.array(result.convert("L"))
         unique = np.unique(arr)
         assert len(unique) == 5, f"Expected 5 unique grey values for 5 zones, got {len(unique)}: {unique}"
+
+
+class TestEdgeSVGExport:
+    def _setup(self):
+        from backend.analysis.preprocessing import prepare
+        from backend.analysis.edges import extract_edge_hierarchy
+        img   = _contour_with_texture()
+        cache = prepare(img)
+        edges, maps = extract_edge_hierarchy(cache, None)
+        return edges, cache
+
+    def test_svg_starts_with_svg_tag(self):
+        from backend.analysis.edges import export_edges_svg
+        edges, cache = self._setup()
+        svg = export_edges_svg(edges, cache.W, cache.H)
+        assert svg.strip().startswith("<svg "), "SVG must start with <svg"
+
+    def test_svg_closes_correctly(self):
+        from backend.analysis.edges import export_edges_svg
+        edges, cache = self._setup()
+        svg = export_edges_svg(edges, cache.W, cache.H)
+        assert "</svg>" in svg
+
+    def test_svg_has_correct_dimensions(self):
+        from backend.analysis.edges import export_edges_svg
+        edges, cache = self._setup()
+        svg = export_edges_svg(edges, cache.W, cache.H)
+        assert f'width="{cache.W}"' in svg
+        assert f'height="{cache.H}"' in svg
+
+    def test_texture_detail_false_zeros_texture_map(self):
+        from backend.analysis.preprocessing import prepare
+        from backend.analysis.edges import extract_edge_hierarchy
+        img   = _contour_with_texture()
+        cache = prepare(img)
+        _, maps_without = extract_edge_hierarchy(cache, None, include_texture=False)
+        assert maps_without["texture"].sum() == 0, \
+            "texture map must be all-zero when include_texture=False"
+
+    def test_include_texture_true_may_have_texture_edges(self):
+        from backend.analysis.preprocessing import prepare
+        from backend.analysis.edges import extract_edge_hierarchy
+        img   = _contour_with_texture()
+        cache = prepare(img)
+        edges_with, _ = extract_edge_hierarchy(cache, None, include_texture=True)
+        # At least some edges should exist (texture or otherwise)
+        assert len(edges_with) > 0

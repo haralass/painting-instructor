@@ -46,6 +46,8 @@ def run_pipeline(
     palette_size: int = 12,
     detail_level: int = 3,
     value_zones: int = 5,
+    texture_detail: bool = True,
+    background_detail: bool = False,
     # backward-compat alias
     n_colors: int = 0,
 ) -> dict:
@@ -197,6 +199,8 @@ def run_pipeline(
             value_zones=value_zones,
             medium=medium,
             fg_mask=fg_mask,
+            texture_detail=texture_detail,
+            background_detail=background_detail,
         )
         timings["hierarchical"] = round(time.perf_counter() - t0, 2)
         # Append hierarchical detail level outputs as additional pages
@@ -334,4 +338,10 @@ def _build_manifest(
         "timings": timings,
         "errors": {k: v[:300] for k, v in errors.items()},  # truncate for JSON
     }
+
+    from ..teaching.mediums import get_medium as _get_medium_for_manifest
+    medium_cfg = _get_medium_for_manifest(medium)
+    manifest["teaching_stages"]       = medium_cfg.get("stages", [])
+    manifest["teaching_instructions"] = medium_cfg.get("instructions", {})
+
     return manifest

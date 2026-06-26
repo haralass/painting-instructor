@@ -458,21 +458,23 @@ class TestColourFamilyStableIDs:
 
 
 class TestEdgeRegionContext:
-    def test_edges_have_nonzero_region_a(self):
-        """Every edge in a non-trivial image should have region_a > 0."""
+    def test_edges_have_region_a_set(self):
+        """Every edge in a non-trivial image should have region_a not None when a label_map is provided."""
         from backend.analysis.edges import extract_edge_hierarchy
         from backend.analysis.regions import build_region_hierarchy
         from backend.analysis.colours import extract_colour_families
         img = Image.fromarray(np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8))
         cache = _prepare(img)
         _, _, internal = extract_colour_families(cache, 6)
-        label_maps, _ = build_region_hierarchy(cache, 6, 3, 3, internal)
+        label_maps, regions = build_region_hierarchy(cache, 6, 3, 3, internal)
         lm = label_maps.get("l3")
         if lm is None:
             lm = list(label_maps.values())[-1]
-        edges, _ = extract_edge_hierarchy(cache, lm)
-        nonzero = [e for e in edges if e.region_a != 0]
-        assert len(nonzero) > 0, "All edges have region_a=0 — region context not working"
+        edge_scale = "l3" if "l3" in label_maps else list(label_maps.keys())[-1]
+        mapping = {r.source_label: r.id for r in regions if r.scale == edge_scale}
+        edges, _ = extract_edge_hierarchy(cache, lm, label_to_region_id=mapping)
+        with_region = [e for e in edges if e.region_a is not None]
+        assert len(with_region) > 0, "All edges have region_a=None — region context not working"
 
 
 class TestReferenceImage:
@@ -527,6 +529,47 @@ def test_pipeline_edge_map_not_none():
 
     assert len(received_maps) > 0
     assert received_maps[0] is not None, "label_map_for_edges was None — edge analysis received no region context"
+
+
+class TestEdgeRegionIDMapping:
+    def _make_hierarchy(self):
+        from backend.analysis.regions import build_region_hierarchy
+        from backend.analysis.colours import extract_colour_families
+        from backend.analysis.preprocessing import prepare
+        img = Image.fromarray(np.random.default_rng(7).integers(0, 255, (64, 64, 3), dtype=np.uint8))
+        cache = prepare(img)
+        _, _, internal = extract_colour_families(cache, 6)
+        return build_region_hierarchy(cache, 6, 3, 3, internal), cache
+
+    def test_edge_region_ids_valid(self):
+        from backend.analysis.edges import extract_edge_hierarchy
+        (label_maps, regions), cache = self._make_hierarchy()
+        region_id_set = {r.id for r in regions}
+        lm = label_maps.get("l3") or label_maps.get("l4") or list(label_maps.values())[0]
+        edge_scale = next(k for k in ["l3", "l4", "l2", "l5", "l1"] if k in label_maps)
+        mapping = {r.source_label: r.id for r in regions if r.scale == edge_scale}
+        edges, _ = extract_edge_hierarchy(cache, lm, label_to_region_id=mapping)
+        for e in edges:
+            if e.region_a is not None:
+                assert e.region_a in region_id_set, f"Edge region_a={e.region_a} not a valid Region.id"
+            if e.region_b is not None:
+                assert e.region_b in region_id_set, f"Edge region_b={e.region_b} not a valid Region.id"
+
+    def test_zero_label_maps_to_region(self):
+        """Label 0 must be resolvable to a Region.id — it is NOT 'no region'."""
+        mapping = {0: 42, 1: 7}
+        from backend.analysis.edges import _label_to_rid
+        assert _label_to_rid(0, mapping) == 42
+
+    def test_inter_region_edges_have_different_ra_rb(self):
+        from backend.analysis.edges import extract_edge_hierarchy
+        (label_maps, regions), cache = self._make_hierarchy()
+        lm = list(label_maps.values())[0]
+        edge_scale = list(label_maps.keys())[0]
+        mapping = {r.source_label: r.id for r in regions if r.scale == edge_scale}
+        edges, _ = extract_edge_hierarchy(cache, lm, label_to_region_id=mapping)
+        inter_region = [e for e in edges if e.region_a is not None and e.region_b is not None and e.region_a != e.region_b]
+        assert len(inter_region) > 0, "No inter-region edges found"
 
 
 class TestValueZonesExtra:

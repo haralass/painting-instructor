@@ -9,12 +9,26 @@ from .preprocessing import ImageCache
 _MIN_ARC = 8
 
 
+def _label_to_rid(raw_lbl: int | None, mapping: dict[int, int] | None) -> int | None:
+    """
+    Resolve a raw label value to a Region.id using the provided mapping.
+
+    Label 0 IS a valid region (zero-based indexing). Only None means no region.
+    """
+    if raw_lbl is None:
+        return None
+    if mapping is not None:
+        return mapping.get(raw_lbl)   # None if label not in map
+    return raw_lbl   # fall back to raw label if no mapping provided
+
+
 def extract_edge_hierarchy(
     cache: ImageCache,
     label_map: np.ndarray | None,
     fg_mask: np.ndarray | None = None,
     include_texture: bool = True,
     include_background: bool = True,
+    label_to_region_id: dict[int, int] | None = None,   # NEW param
 ) -> tuple[list[Edge], dict[str, np.ndarray]]:
     """
     Classify detected edges into four semantic levels:
@@ -57,12 +71,12 @@ def extract_edge_hierarchy(
         bg_mask = (fg_mask == 0)
 
     # Precompute per-label stats if label_map given
+    # label_stats is keyed by RAW label value (before Region.id mapping)
     label_stats: dict[int, dict] = {}
     if label_map is not None:
         lab_img = cache.lab  # (H, W, 3) float64 in skimage LAB
         for lbl in np.unique(label_map):
-            if lbl == 0:
-                continue
+            # label 0 IS valid — zero-based indexing, do NOT skip
             mask = label_map == lbl
             label_stats[int(lbl)] = {
                 "area": int(mask.sum()),
@@ -109,25 +123,32 @@ def extract_edge_hierarchy(
             continue
 
         # Sample neighbouring regions using offsets around contour midpoint
-        ra, rb = 0, None
+        ra_raw: int | None = None
+        rb_raw: int | None = None
         if label_map is not None:
+            H_lm, W_lm = label_map.shape
             mid_idx = len(pts) // 2
             mx_m, my_m = int(pts[mid_idx][0]), int(pts[mid_idx][1])
-            for dx, dy in [(-2, 0), (2, 0), (0, -2), (0, 2)]:
+            for dx, dy in [(-2, 0), (2, 0), (0, -2), (0, 2), (-1, -1), (1, 1)]:
                 nx, ny = mx_m + dx, my_m + dy
-                if 0 <= nx < W and 0 <= ny < H:
+                if 0 <= nx < W_lm and 0 <= ny < H_lm:
                     lbl = int(label_map[ny, nx])
-                    if lbl > 0:
-                        if ra == 0:
-                            ra = lbl
-                        elif lbl != ra:
-                            rb = lbl
-                            break
+                    if ra_raw is None:
+                        ra_raw = lbl
+                    elif lbl != ra_raw:
+                        rb_raw = lbl
+                        break
+
+        # Resolve raw label values to Region.id using mapping
+        # Label 0 is valid — only None means no region
+        ra = _label_to_rid(ra_raw, label_to_region_id)
+        rb = _label_to_rid(rb_raw, label_to_region_id)
 
         # Use region stats for colour difference classification
+        # label_stats is keyed by RAW label values
         colour_diff = 0.0
-        if ra and rb and ra in label_stats and rb in label_stats:
-            diff = label_stats[ra]["mean_lab"] - label_stats[rb]["mean_lab"]
+        if ra_raw is not None and rb_raw is not None and ra_raw in label_stats and rb_raw in label_stats:
+            diff = label_stats[ra_raw]["mean_lab"] - label_stats[rb_raw]["mean_lab"]
             colour_diff = float(np.linalg.norm(diff)) / 100.0
 
         importance = arc_norm * 0.6 + mean_grad * 0.4

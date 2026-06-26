@@ -666,3 +666,70 @@ class TestValueZonesExtra:
         assert len(zones) == 7
         for z in zones:
             assert (zone_map == z.id).any(), f"Zone {z.id} has zero pixels"
+
+
+class TestMediumRendering:
+    def _run_for_medium(self, medium: str, out_dir):
+        from pathlib import Path
+        from backend.analysis.pipeline import run_hierarchical_analysis
+        img = Image.fromarray(np.random.default_rng(55).integers(0, 255, (64, 64, 3), dtype=np.uint8))
+        return run_hierarchical_analysis(
+            img=img,
+            out_dir=Path(out_dir) / medium,
+            palette_size=6,
+            detail_level=2,
+            value_zones=3,
+            medium=medium,
+        )
+
+    def test_pencil_colour_output_is_greyscale(self, tmp_path):
+        """Pencil medium must render colours as grey tones, not hue."""
+        result = self._run_for_medium("pencil", tmp_path)
+        level3 = result.get("detail_levels", {}).get("2", {})
+        colour_path = level3.get("colours")
+        if not colour_path:
+            pytest.skip("No colour asset produced")
+        arr = np.array(Image.open(colour_path).convert("RGB"))
+        # For a greyscale image, R == G == B for every pixel
+        r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+        max_diff = int(np.max(np.abs(r.astype(int) - g.astype(int))))
+        assert max_diff <= 5, f"Pencil colour output has colour (max R-G diff={max_diff})"
+
+    def test_oil_and_charcoal_colour_outputs_differ(self, tmp_path):
+        """Oil and charcoal must produce visually different colour renders."""
+        oil_result = self._run_for_medium("oil", tmp_path)
+        char_result = self._run_for_medium("charcoal", tmp_path)
+        oil_path  = oil_result.get("detail_levels", {}).get("2", {}).get("colours")
+        char_path = char_result.get("detail_levels", {}).get("2", {}).get("colours")
+        if not oil_path or not char_path:
+            pytest.skip("Missing colour assets")
+        oil_arr  = np.array(Image.open(oil_path).convert("RGB")).astype(float)
+        char_arr = np.array(Image.open(char_path).convert("RGB")).astype(float)
+        mean_diff = float(np.abs(oil_arr - char_arr).mean())
+        assert mean_diff > 5.0, f"Oil and charcoal produced nearly identical colour renders (mean diff={mean_diff:.2f})"
+
+    def test_watercolour_preserves_light_regions(self, tmp_path):
+        """Watercolour medium must leave very light areas near-white."""
+        # Create image with many white pixels
+        arr = np.full((64, 64, 3), 240, dtype=np.uint8)
+        arr[32:, :] = 50   # lower half dark
+        img = Image.fromarray(arr)
+        from pathlib import Path
+        from backend.analysis.pipeline import run_hierarchical_analysis
+        result = run_hierarchical_analysis(
+            img=img,
+            out_dir=Path(tmp_path) / "wc",
+            palette_size=4,
+            detail_level=2,
+            value_zones=3,
+            medium="watercolor",
+        )
+        level = result.get("detail_levels", {}).get("2", {})
+        colour_path = level.get("colours")
+        if not colour_path:
+            pytest.skip("No colour asset")
+        colour = np.array(Image.open(colour_path).convert("RGB"))
+        # Upper half (light area) should stay near-white
+        upper = colour[:32, :, :]
+        mean_upper = float(upper.mean())
+        assert mean_upper > 200, f"Watercolour light region too dark: mean={mean_upper:.1f}"

@@ -220,3 +220,16 @@ class TestMediumsEndpoint:
     def test_get_unknown_medium_returns_404(self):
         res = client.get("/mediums/gouache")
         assert res.status_code == 404
+
+
+def test_outputs_dir_from_env(monkeypatch, tmp_path):
+    """OUTPUTS_DIR env var must propagate through to the path utility."""
+    monkeypatch.setenv("OUTPUTS_DIR", str(tmp_path))
+    # Re-import the module to pick up the new env var
+    import importlib
+    import backend.utils.paths as paths_module
+    importlib.reload(paths_module)
+    assert paths_module.outputs_root() == tmp_path.resolve()
+    assert paths_module.job_dir("abc123") == tmp_path.resolve() / "abc123"
+    # Restore
+    importlib.reload(paths_module)

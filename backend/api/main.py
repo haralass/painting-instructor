@@ -3,6 +3,8 @@ import os
 import uuid
 from pathlib import Path
 
+from ..utils.paths import outputs_root
+
 from fastapi import FastAPI, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -36,7 +38,7 @@ app.add_middleware(
 )
 
 # ── Static file serving ───────────────────────────────────────────────────────
-OUTPUTS_DIR = Path(os.getenv("OUTPUTS_DIR", "outputs"))
+OUTPUTS_DIR = outputs_root()
 OUTPUTS_DIR.mkdir(exist_ok=True)
 app.mount("/outputs", StaticFiles(directory=str(OUTPUTS_DIR)), name="outputs")
 

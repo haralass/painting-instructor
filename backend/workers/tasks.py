@@ -23,17 +23,19 @@ celery_app.conf.accept_content    = ["json"]
 _PROGRESS = {
     "loading":          5,
     "preprocessing":    10,
-    "line_art":         20,
-    "notan":            30,
-    "value_analysis":   35,
-    "color_temperature":40,
-    "color_palette":    50,
-    "light_direction":  55,
-    "color_by_number":  65,
-    "dot_to_dot":       75,
-    "hierarchical":     80,
-    "video":            85,
-    "pdf":              92,
+    "line_art":         15,
+    "notan":            25,
+    "value_analysis":   30,
+    "color_temperature":35,
+    "color_palette":    42,
+    "light_direction":  48,
+    "color_by_number":  55,
+    "dot_to_dot":       65,
+    "hierarchical":     75,
+    "analysis_ready":   80,   # NEW — preliminary manifest written
+    "rendering_extras": 85,   # NEW — starting video/PDF
+    "video":            88,
+    "pdf":              93,
     "manifest":         97,
     "completed":        100,
 }
@@ -106,6 +108,8 @@ def run_pipeline(
             "color_by_number":  "Building paint-by-numbers",
             "dot_to_dot":       "Placing structural dots",
             "hierarchical":     "Building hierarchical regions",
+            "analysis_ready":   "Analysis complete — generating extras",
+            "rendering_extras": "Rendering video and PDF",
             "video":            "Rendering tutorial video",
             "pdf":              "Assembling PDF book",
             "manifest":         "Writing manifest",
@@ -231,7 +235,29 @@ def run_pipeline(
         raise RuntimeError(f"Critical hierarchical analysis failed:\n{tb}")
     hier = hier or {}
 
+    # Write preliminary manifest immediately after hierarchical succeeds
+    manifest_path = out_dir / "manifest.json"
+    progress("analysis_ready")
+    prelim_manifest = _build_manifest(
+        job_id=job_id,
+        img=img,
+        medium=medium,
+        palette_size=palette_size,
+        detail_level=detail_level,
+        value_zones=value_zones,
+        pages=pages,
+        video_path=None,   # not yet available
+        pdf_path=None,
+        hier=hier,
+        timings=timings,
+        errors=errors,
+        ref_suffix=suffix,
+    )
+    prelim_manifest["status"] = "analysis_ready"
+    manifest_path.write_text(json.dumps(prelim_manifest, indent=2))
+
     # ── Step 10: Video ────────────────────────────────────────────────────────
+    progress("rendering_extras")
     video_path = None
     if la_result and notan_result and cbn_result:
         progress("video")
@@ -291,7 +317,6 @@ def run_pipeline(
         errors=errors,
         ref_suffix=suffix,
     )
-    manifest_path = out_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2))
 
     warnings = [k for k in errors if k not in CRITICAL_STEPS]

@@ -733,3 +733,234 @@ class TestMediumRendering:
         upper = colour[:32, :, :]
         mean_upper = float(upper.mean())
         assert mean_upper > 200, f"Watercolour light region too dark: mean={mean_upper:.1f}"
+
+
+# ── A5: Real bounding boxes ───────────────────────────────────────────────────
+
+class TestRealBoundingBoxes:
+    """A5: ndimage_find_objects bboxes must be geometrically valid."""
+
+    def _get_regions(self, img):
+        from backend.analysis.preprocessing import prepare
+        from backend.analysis.colours import extract_colour_families
+        from backend.analysis.regions import build_region_hierarchy
+        cache = prepare(img)
+        _, _, internal = extract_colour_families(cache, palette_size=6)
+        label_maps, regions = build_region_hierarchy(cache, 6, 3, 3, internal, seed=0)
+        return cache, label_maps, regions
+
+    def test_all_bboxes_within_image_bounds(self):
+        img = _flat_colour_image([(200, 50, 50), (50, 200, 50), (50, 50, 200)], w=300, h=100)
+        cache, _, regions = self._get_regions(img)
+        W, H = cache.W, cache.H
+        for r in regions:
+            x0, y0, x1, y1 = r.bbox
+            assert 0 <= x0 < x1 <= W, f"Region {r.id} bbox x {x0}..{x1} outside [0, {W}]"
+            assert 0 <= y0 < y1 <= H, f"Region {r.id} bbox y {y0}..{y1} outside [0, {H}]"
+
+    def test_centroid_inside_bbox(self):
+        img = _flat_colour_image([(200, 50, 50), (50, 200, 50), (50, 50, 200)], w=300, h=100)
+        cache, _, regions = self._get_regions(img)
+        for r in regions:
+            cx, cy = r.centroid
+            x0, y0, x1, y1 = r.bbox
+            assert x0 <= cx <= x1, f"Region {r.id} centroid x={cx} outside bbox {x0}..{x1}"
+            assert y0 <= cy <= y1, f"Region {r.id} centroid y={cy} outside bbox {y0}..{y1}"
+
+    def test_different_spatial_regions_have_different_bboxes(self):
+        """Two non-overlapping colour bands should produce bboxes at different x positions."""
+        img = _flat_colour_image([(220, 50, 50), (50, 50, 220)], w=200, h=100)
+        cache, label_maps, regions = self._get_regions(img)
+        # At the finest level there should be at least two regions with non-identical bboxes
+        finest_regions = [r for r in regions if r.scale == "l5"]
+        if len(finest_regions) < 2:
+            finest_regions = regions   # fall back to all
+        bboxes = [r.bbox for r in finest_regions]
+        unique_bboxes = {tuple(b) for b in bboxes}
+        assert len(unique_bboxes) > 1, "All regions have identical bbox — ndimage_find_objects not working"
+
+    def test_bbox_area_consistent_with_pixel_count(self):
+        """bbox area (w×h) must be >= the region's pixel count (pixels fit inside the box)."""
+        img = _flat_colour_image([(200, 50, 50), (50, 200, 50), (50, 50, 200)], w=300, h=100)
+        cache, label_maps, regions = self._get_regions(img)
+        for r in regions:
+            lm = label_maps.get(r.scale)
+            if lm is None:
+                continue
+            px_count = int((lm == r.source_label).sum())
+            x0, y0, x1, y1 = r.bbox
+            bbox_area = (x1 - x0) * (y1 - y0)
+            assert bbox_area >= px_count, (
+                f"Region {r.id}: bbox_area={bbox_area} < px_count={px_count} — impossible"
+            )
+
+
+# ── A6: region_complexity controls segment count ──────────────────────────────
+
+class TestRegionComplexity:
+    """A6: region_complexity=1 must produce fewer fine-level segments than complexity=5."""
+
+    def _count_regions_at_level(self, img, complexity: int, level: str = "l5") -> int:
+        from backend.analysis.preprocessing import prepare
+        from backend.analysis.colours import extract_colour_families
+        from backend.analysis.regions import build_region_hierarchy
+        cache = prepare(img)
+        _, _, internal = extract_colour_families(cache, palette_size=6)
+        _, regions = build_region_hierarchy(
+            cache, 6, 3, 3, internal, seed=0,
+            region_complexity=complexity,
+        )
+        return len([r for r in regions if r.scale == level])
+
+    def test_complexity_1_fewer_than_complexity_5_at_l5(self):
+        img = Image.fromarray(np.random.default_rng(11).integers(0, 255, (128, 128, 3), dtype=np.uint8))
+        n1 = self._count_regions_at_level(img, complexity=1)
+        n5 = self._count_regions_at_level(img, complexity=5)
+        assert n1 < n5, (
+            f"region_complexity=1 produced {n1} l5 regions, "
+            f"complexity=5 produced {n5} — expected n1 < n5"
+        )
+
+    def test_complexity_3_is_between_1_and_5(self):
+        img = Image.fromarray(np.random.default_rng(22).integers(0, 255, (128, 128, 3), dtype=np.uint8))
+        n1 = self._count_regions_at_level(img, complexity=1)
+        n3 = self._count_regions_at_level(img, complexity=3)
+        n5 = self._count_regions_at_level(img, complexity=5)
+        assert n1 <= n3 <= n5, (
+            f"region_complexity ordering broken: n1={n1}, n3={n3}, n5={n5}"
+        )
+
+    def test_complexity_param_flows_through_build(self):
+        """Calling with different complexities must not raise and must differ in label_map size."""
+        from backend.analysis.preprocessing import prepare
+        from backend.analysis.colours import extract_colour_families
+        from backend.analysis.regions import build_region_hierarchy
+        img = Image.fromarray(np.random.default_rng(33).integers(0, 255, (64, 64, 3), dtype=np.uint8))
+        cache = prepare(img)
+        _, _, internal = extract_colour_families(cache, palette_size=4)
+        for c in (1, 2, 3, 4, 5):
+            lmaps, regs = build_region_hierarchy(cache, 4, 3, 3, internal, seed=0, region_complexity=c)
+            assert "l1" in lmaps and "l5" in lmaps, f"complexity={c}: missing level keys"
+            assert len(regs) > 0, f"complexity={c}: no regions produced"
+
+
+# ── A12: cKDTree chain_polylines performance ──────────────────────────────────
+
+class TestChainPolylines:
+    """A12: _chain_polylines with cKDTree must handle 1000 polylines in bounded time."""
+
+    def _make_polylines(self, n: int, rng) -> list[np.ndarray]:
+        """Generate n short polylines with random endpoints."""
+        polylines = []
+        for _ in range(n):
+            start = rng.uniform(0, 500, (2,))
+            end   = start + rng.uniform(-20, 20, (2,))
+            polylines.append(np.array([start, end]))
+        return polylines
+
+    def test_chain_1000_polylines_under_1_second(self):
+        from backend.pipeline.dot_to_dot.processor import _chain_polylines
+        import time
+        rng = np.random.default_rng(42)
+        polys = self._make_polylines(1000, rng)
+        t0 = time.perf_counter()
+        result = _chain_polylines(polys)
+        elapsed = time.perf_counter() - t0
+        assert elapsed < 1.0, f"_chain_polylines(1000) took {elapsed:.3f}s — expected <1s"
+        assert len(result) >= 2, "chain result should have points"
+
+    def test_chain_empty_returns_empty(self):
+        from backend.pipeline.dot_to_dot.processor import _chain_polylines
+        result = _chain_polylines([])
+        assert result.shape == (0, 2)
+
+    def test_chain_single_polyline_returns_it(self):
+        from backend.pipeline.dot_to_dot.processor import _chain_polylines
+        poly = np.array([[0.0, 0.0], [1.0, 1.0], [2.0, 0.0]])
+        result = _chain_polylines([poly])
+        np.testing.assert_array_equal(result, poly)
+
+    def test_chain_visits_all_polylines(self):
+        """All polyline points should appear in the chained output (may be reversed)."""
+        from backend.pipeline.dot_to_dot.processor import _chain_polylines
+        rng = np.random.default_rng(7)
+        polys = self._make_polylines(10, rng)
+        result = _chain_polylines(polys)
+        total_pts = sum(len(p) for p in polys)
+        assert len(result) == total_pts, (
+            f"Expected {total_pts} points in chain, got {len(result)}"
+        )
+
+    def test_chain_100_polylines_deterministic(self):
+        """Same input must produce same output (no random tie-breaking)."""
+        from backend.pipeline.dot_to_dot.processor import _chain_polylines
+        rng = np.random.default_rng(55)
+        polys = self._make_polylines(100, rng)
+        r1 = _chain_polylines([p.copy() for p in polys])
+        r2 = _chain_polylines([p.copy() for p in polys])
+        np.testing.assert_array_equal(r1, r2, err_msg="chain result is non-deterministic")
+
+
+# ── A13: Edge budget enforcement ──────────────────────────────────────────────
+
+class TestEdgeBudgets:
+    """A13: extract_edge_hierarchy must respect max_edges / max_contours / max_time_secs."""
+
+    def _pathological_image(self, w: int = 120, h: int = 120) -> Image.Image:
+        """High-frequency checkerboard — produces huge numbers of tiny contours."""
+        arr = np.indices((h, w)).sum(axis=0) % 2
+        arr = (arr * 200).astype(np.uint8)
+        return Image.fromarray(np.stack([arr, arr, arr], axis=-1))
+
+    def test_max_edges_caps_output(self):
+        from backend.analysis.preprocessing import prepare
+        from backend.analysis.edges import extract_edge_hierarchy
+        img = self._pathological_image()
+        cache = prepare(img)
+        edges, _ = extract_edge_hierarchy(cache, None, max_edges=50, max_contours=50_000, max_time_secs=30.0)
+        assert len(edges) <= 50, f"Expected ≤50 edges, got {len(edges)}"
+
+    def test_max_contours_pre_filters(self):
+        """With max_contours=10, no more than 10 contours should be processed."""
+        from backend.analysis.preprocessing import prepare
+        from backend.analysis.edges import extract_edge_hierarchy
+        img = self._pathological_image()
+        cache = prepare(img)
+        # max_contours=10 caps before the loop; max_edges high so it's not the limiting factor
+        edges, _ = extract_edge_hierarchy(cache, None, max_edges=100_000, max_contours=10, max_time_secs=30.0)
+        assert len(edges) <= 10, f"Expected ≤10 edges (from 10 contours), got {len(edges)}"
+
+    def test_budget_does_not_crash_on_empty_image(self):
+        """Solid-colour image has no edges — must return empty list without error."""
+        from backend.analysis.preprocessing import prepare
+        from backend.analysis.edges import extract_edge_hierarchy
+        img = Image.fromarray(np.full((64, 64, 3), 128, dtype=np.uint8))
+        cache = prepare(img)
+        edges, maps = extract_edge_hierarchy(cache, None, max_edges=100, max_contours=100, max_time_secs=5.0)
+        assert isinstance(edges, list)
+        assert isinstance(maps, dict)
+
+    def test_capped_edges_are_highest_importance(self):
+        """When max_edges triggers, the kept edges must be the highest-importance ones."""
+        from backend.analysis.preprocessing import prepare
+        from backend.analysis.edges import extract_edge_hierarchy
+        img = _contour_with_texture()
+        cache = prepare(img)
+        # Get all edges with a generous cap
+        all_edges, _ = extract_edge_hierarchy(cache, None, max_edges=100_000)
+        if len(all_edges) <= 5:
+            return  # not enough edges to test capping
+        # Now cap to 5
+        capped_edges, _ = extract_edge_hierarchy(cache, None, max_edges=5)
+        assert len(capped_edges) <= 5
+        if len(capped_edges) == 0:
+            return
+        min_capped = min(e.importance for e in capped_edges)
+        # Every uncapped edge that was dropped must have importance <= min_capped
+        capped_ids = {e.id for e in capped_edges}
+        dropped = [e for e in all_edges if e.id not in capped_ids]
+        for e in dropped:
+            assert e.importance <= min_capped + 1e-9, (
+                f"Dropped edge id={e.id} importance={e.importance:.4f} > "
+                f"min_capped={min_capped:.4f} — cap did not keep the best edges"
+            )

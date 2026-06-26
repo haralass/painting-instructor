@@ -192,7 +192,8 @@ def run_pipeline(
     if r:
         pages.append(save("dot_to_dot", r))
 
-    # ── Step 9: Hierarchical analysis (new architecture) ──────────────────────
+    # ── Step 9: Hierarchical analysis (new architecture) — CRITICAL ──────────
+    CRITICAL_STEPS = {"loading", "hierarchical"}
     try:
         from ..analysis.pipeline import run_hierarchical_analysis
         progress("hierarchical")
@@ -221,8 +222,9 @@ def run_pipeline(
     except Exception:
         tb = traceback.format_exc()
         errors["hierarchical"] = tb
-        log.warning("Hierarchical analysis failed:\n%s", tb)
-        hier = {}
+        log.error("Critical hierarchical analysis failed:\n%s", tb)
+        raise RuntimeError(f"Critical hierarchical analysis failed:\n{tb}")
+    hier = hier or {}
 
     # ── Step 10: Video ────────────────────────────────────────────────────────
     video_path = None
@@ -287,13 +289,15 @@ def run_pipeline(
     manifest_path = out_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2))
 
+    warnings = [k for k in errors if k not in CRITICAL_STEPS]
     return {
-        "pages":  pages,
-        "video":  video_path,
-        "pdf":    pdf_path,
+        "pages":    pages,
+        "video":    video_path,
+        "pdf":      pdf_path,
         "manifest": str(manifest_path),
-        "errors": errors,
-        "timings": timings,
+        "warnings": warnings,
+        "errors":   errors,
+        "timings":  timings,
     }
 
 

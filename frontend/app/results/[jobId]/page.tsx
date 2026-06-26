@@ -81,7 +81,7 @@ type CompareMode = "analysis" | "reference" | "side_by_side" | "overlay";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type JobStatus = {
-  status: "queued" | "processing" | "completed" | "failed";
+  status: "queued" | "processing" | "completed" | "completed_with_warnings" | "failed";
   progress: number;
   step: string;
   message: string;
@@ -188,7 +188,7 @@ export default function ResultsPage() {
       const data: JobStatus = await res.json();
       setJobStatus(data);
 
-      if (data.status === "completed" && data.result?.manifest) {
+      if ((data.status === "completed" || data.status === "completed_with_warnings") && data.result?.manifest) {
         if (pollRef.current) clearInterval(pollRef.current);
         await fetchManifest(data.result.manifest);
       }
@@ -199,7 +199,7 @@ export default function ResultsPage() {
     poll();
     pollRef.current = setInterval(() => {
       setJobStatus(prev => {
-        if (prev.status === "completed" || prev.status === "failed") {
+        if (prev.status === "completed" || prev.status === "completed_with_warnings" || prev.status === "failed") {
           if (pollRef.current) clearInterval(pollRef.current);
         }
         return prev;
@@ -210,7 +210,7 @@ export default function ResultsPage() {
   }, [poll]);
 
   // ── Loading / Error states ─────────────────────────────────────────────────
-  if (jobStatus.status !== "completed") {
+  if (jobStatus.status !== "completed" && jobStatus.status !== "completed_with_warnings") {
     const isRunning = jobStatus.status === "queued" || jobStatus.status === "processing";
     return (
       <main className="min-h-screen flex flex-col items-center justify-center px-4"

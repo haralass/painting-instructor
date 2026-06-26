@@ -3,7 +3,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, field_validator
 
 
-JobStatus = Literal["queued", "processing", "completed", "failed"]
+JobStatus = Literal["queued", "processing", "completed", "completed_with_warnings", "failed"]
 
 
 class JobResult(BaseModel):

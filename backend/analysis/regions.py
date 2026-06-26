@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 from skimage import segmentation
 from skimage import color as skcolor
-from scipy.ndimage import center_of_mass, mean as ndimage_mean
+from scipy.ndimage import center_of_mass, mean as ndimage_mean, labeled_comprehension
 
 from .models import Region
 from .preprocessing import ImageCache
@@ -257,70 +257,137 @@ def _build_merge_tree_hierarchy(
     scale_lbl_to_rid: dict[str, dict[int, int]] = {}
 
     for lvl_idx, (scale_name, label_map) in enumerate(level_label_maps.items()):
-        uniq = np.unique(label_map)
-        this_scale_map: dict[int, int] = {}
-
-        for lbl in uniq:
-            mask = label_map == lbl
-            area = int(mask.sum())
-            if area == 0:
-                continue
-
-            ys, xs = np.where(mask)
-            cy, cx = float(ys.mean()), float(xs.mean())
-            x_min, x_max = int(xs.min()), int(xs.max())
-            y_min, y_max = int(ys.min()), int(ys.max())
-
-            lab_vals = lab_img[mask]
-            mean_lab = lab_vals.mean(axis=0)
-            mean_rgb_f = skcolor.lab2rgb(mean_lab.reshape(1, 1, 3))[0, 0] * 255
-            mean_rgb = tuple(int(np.clip(v, 0, 255)) for v in mean_rgb_f)
-
-            vz_ids = zone_map[mask]
-            vz = int(np.bincount(vz_ids.astype(np.intp)).argmax())
-
-            importance = float(np.log1p(area)) * (1 + float(grad[mask].mean()) / 50.0)
-            importance = min(1.0, importance / 15.0)
-
-            texture = float(lab_vals[:, 0].std()) / 50.0
-            texture = min(1.0, texture)
-
-            cf_id = _nearest_colour_family(mean_lab, value_colour_families)
-
-            # Parent: look up same pixel in coarser level
-            parent_id: int | None = None
-            if lvl_idx > 0:
-                coarser_scale = f"l{lvl_idx}"  # lvl_idx 1-based is current, 0-based coarser
-                coarser_lm = level_label_maps.get(coarser_scale)
-                coarser_map = scale_lbl_to_rid.get(coarser_scale)
-                if coarser_lm is not None and coarser_map is not None:
-                    cy_i = int(np.clip(round(cy), 0, H - 1))
-                    cx_i = int(np.clip(round(cx), 0, W - 1))
-                    parent_lbl = int(coarser_lm[cy_i, cx_i])
-                    parent_id = coarser_map.get(parent_lbl)
-
-            all_regions.append(Region(
-                id=region_id,
-                source_label=int(lbl),
-                scale=scale_name,
-                parent_id=parent_id,
-                level=lvl_idx,
-                area=area,
-                centroid=(cx, cy),
-                bbox=(x_min, y_min, x_max, y_max),
-                mean_lab=(float(mean_lab[0]), float(mean_lab[1]), float(mean_lab[2])),
-                mean_rgb=mean_rgb,
-                value_zone=vz,
-                colour_family_id=cf_id,
-                importance=importance,
-                texture_score=texture,
-            ))
-            this_scale_map[int(lbl)] = region_id
-            region_id += 1
-
+        level_regions, region_id = _extract_level_regions(
+            label_map=label_map,
+            scale=scale_name,
+            level=lvl_idx,
+            cache=cache,
+            zone_map=zone_map,
+            value_colour_families=value_colour_families,
+            id_start=region_id,
+            level_label_maps=level_label_maps,
+            scale_lbl_to_rid=scale_lbl_to_rid,
+        )
+        all_regions.extend(level_regions)
+        this_scale_map = {r.source_label: r.id for r in level_regions}
         scale_lbl_to_rid[scale_name] = this_scale_map
 
     return level_label_maps, all_regions
+
+
+def _extract_level_regions(
+    label_map: np.ndarray,
+    scale: str,
+    level: int,
+    cache: ImageCache,
+    zone_map: np.ndarray,
+    value_colour_families: dict,
+    id_start: int,
+    level_label_maps: dict[str, np.ndarray],
+    scale_lbl_to_rid: dict[str, dict[int, int]],
+) -> tuple[list[Region], int]:
+    """
+    Vectorised region feature extraction — O(P + V) instead of O(P × V).
+    """
+    lab  = cache.lab.astype(np.float32)
+    grad = cache.grad
+    H, W = cache.H, cache.W
+
+    unique = np.unique(label_map)
+    n = len(unique)
+    if n == 0:
+        return [], id_start
+
+    # --- Vectorised means via scipy.ndimage ---
+    L_means  = ndimage_mean(lab[:, :, 0], label_map, unique)
+    a_means  = ndimage_mean(lab[:, :, 1], label_map, unique)
+    b_means  = ndimage_mean(lab[:, :, 2], label_map, unique)
+    g_means  = ndimage_mean(grad,          label_map, unique)
+
+    # --- Areas via bincount (fast) ---
+    flat = label_map.ravel()
+    max_lbl = int(unique.max()) + 1
+    area_lut = np.bincount(flat, minlength=max_lbl)
+
+    # --- Centroids via ndimage_mean on row/col indices ---
+    ys_idx = np.broadcast_to(np.arange(H, dtype=np.float32)[:, None], (H, W))
+    xs_idx = np.broadcast_to(np.arange(W, dtype=np.float32)[None, :], (H, W))
+    cy_arr = ndimage_mean(ys_idx, label_map, unique)
+    cx_arr = ndimage_mean(xs_idx, label_map, unique)
+
+    # --- Value zone majority via labeled_comprehension ---
+    n_zones = int(zone_map.max()) + 1
+
+    def zone_mode(arr: np.ndarray) -> int:
+        bc = np.bincount(arr.astype(np.int32), minlength=n_zones)
+        return int(bc.argmax())
+
+    vz_arr = labeled_comprehension(zone_map, label_map, unique, zone_mode, int, 0)
+
+    # --- Texture score: std of L* within region (via variance = E[X^2] - E[X]^2) ---
+    L_sq_means = ndimage_mean(lab[:, :, 0] ** 2, label_map, unique)
+    texture_arr = np.sqrt(np.maximum(0.0, np.array(L_sq_means) - np.array(L_means) ** 2)) / 50.0
+    texture_arr = np.clip(texture_arr, 0, 1)
+
+    # --- Build Region objects ---
+    centres_lab = value_colour_families.get("centres_lab")
+    id_to_rank  = value_colour_families.get("cluster_id_to_rank", {})
+    regions: list[Region] = []
+    region_id = id_start
+
+    for i, lbl in enumerate(unique):
+        area = int(area_lut[lbl]) if lbl < max_lbl else 0
+        if area == 0:
+            continue
+
+        mean_lab_arr = np.array([float(L_means[i]), float(a_means[i]), float(b_means[i])])
+        rgb_f = skcolor.lab2rgb(mean_lab_arr.reshape(1, 1, 3))[0, 0] * 255
+        mean_rgb = tuple(int(np.clip(v, 0, 255)) for v in rgb_f)
+
+        importance = float(np.log1p(area) * (1 + float(g_means[i]) / 50.0) / 15.0)
+        importance = min(1.0, importance)
+
+        if centres_lab is not None and len(centres_lab):
+            dists = np.linalg.norm(centres_lab - mean_lab_arr, axis=1)
+            raw_idx = int(dists.argmin())
+            cf_id   = id_to_rank.get(raw_idx, raw_idx)
+        else:
+            cf_id = 0
+
+        cy_v = float(cy_arr[i])
+        cx_v = float(cx_arr[i])
+
+        # Parent: look up same centroid pixel in coarser level
+        parent_id: int | None = None
+        if level > 0:
+            coarser_scale = f"l{level}"
+            coarser_lm = level_label_maps.get(coarser_scale)
+            coarser_map = scale_lbl_to_rid.get(coarser_scale)
+            if coarser_lm is not None and coarser_map is not None:
+                cy_i = int(np.clip(round(cy_v), 0, H - 1))
+                cx_i = int(np.clip(round(cx_v), 0, W - 1))
+                parent_lbl = int(coarser_lm[cy_i, cx_i])
+                parent_id = coarser_map.get(parent_lbl)
+
+        regions.append(Region(
+            id=region_id,
+            source_label=int(lbl),
+            scale=scale,
+            parent_id=parent_id,
+            level=level,
+            area=area,
+            centroid=(cx_v, cy_v),
+            bbox=(0, 0, W, H),   # TODO: bounding box if needed
+            mean_lab=(float(L_means[i]), float(a_means[i]), float(b_means[i])),
+            mean_rgb=mean_rgb,
+            value_zone=int(vz_arr[i]),
+            colour_family_id=cf_id,
+            importance=importance,
+            texture_score=float(texture_arr[i]),
+        ))
+        region_id += 1
+
+    return regions, region_id
 
 
 def _cuts_to_label_maps(

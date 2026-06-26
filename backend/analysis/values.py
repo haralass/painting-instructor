@@ -57,7 +57,7 @@ def compute_value_zones(cache: ImageCache, n_zones: int) -> tuple[np.ndarray, li
 
 
 def _cleanup_zone_map(zone_map: np.ndarray, n_zones: int) -> np.ndarray:
-    """Remove speckle noise by absorbing tiny patches into their largest neighbour."""
+    """Absorb tiny zone patches into their most-shared adjacent zone."""
     min_px = max(50, zone_map.size // 2000)
     result = zone_map.copy()
     for z in range(n_zones):
@@ -66,17 +66,20 @@ def _cleanup_zone_map(zone_map: np.ndarray, n_zones: int) -> np.ndarray:
         if n == 0:
             continue
         sizes = np.bincount(labeled.ravel())
-        small = [c for c in range(1, n + 1) if sizes[c] < min_px]
-        if not small:
-            continue
-        small_mask = np.isin(labeled, small)
-        # Expand neighbours into tiny patches
-        expanded = cv2.dilate(
-            (result != z).astype(np.uint8) * 255, np.ones((5, 5), np.uint8)
-        )
-        result[small_mask & (expanded > 0)] = result[
-            np.roll(small_mask & (expanded > 0), 1, axis=0)
-        ].max() if small_mask.any() else z
+        for comp in range(1, n + 1):
+            if sizes[comp] >= min_px:
+                continue
+            comp_mask = labeled == comp
+            # Find the zone that borders this component most
+            dilated = cv2.dilate(comp_mask.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
+            border_pixels = dilated & ~comp_mask
+            if not border_pixels.any():
+                continue
+            border_zones = result[border_pixels]
+            counts = np.bincount(border_zones.astype(np.int64), minlength=n_zones)
+            counts[z] = 0  # don't reassign to itself
+            best = int(counts.argmax())
+            result[comp_mask] = best
     return result
 
 

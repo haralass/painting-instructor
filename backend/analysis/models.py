@@ -1,10 +1,12 @@
 from __future__ import annotations
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Region(BaseModel):
     id: int
+    source_label: int = 0      # the SLIC / merge-tree label value in that scale's label_map
+    scale: str = ""            # "l1".."l5" (merge tree) or "coarse"/"medium"/"fine"/"micro"
     parent_id: Optional[int] = None
     level: int
     area: int
@@ -25,7 +27,7 @@ class PaletteEntry(BaseModel):
     base_rgb: tuple[int, int, int]
     base_lab: tuple[float, float, float]
     area_fraction: float
-    variations: dict[str, tuple[int, int, int]] = {}
+    variations: dict[str, tuple[int, int, int]] = Field(default_factory=dict)
 
 
 class ColourFamily(BaseModel):
@@ -34,8 +36,8 @@ class ColourFamily(BaseModel):
     base_rgb: tuple[int, int, int]
     base_lab: tuple[float, float, float]
     area_fraction: float
-    linked_region_ids: list[int] = []
-    variations: dict[str, tuple[int, int, int]] = {}
+    linked_region_ids: list[int] = Field(default_factory=list)
+    variations: dict[str, tuple[int, int, int]] = Field(default_factory=dict)
 
 
 class ValueZone(BaseModel):
@@ -44,7 +46,7 @@ class ValueZone(BaseModel):
     l_min: float
     l_max: float
     grey_value: int
-    region_ids: list[int] = []
+    region_ids: list[int] = Field(default_factory=list)
 
 
 class Edge(BaseModel):
@@ -55,14 +57,14 @@ class Edge(BaseModel):
     strength: float
     hardness: float
     importance: float
-    path: list[list[float]] = []
+    path: list[list[float]] = Field(default_factory=list)
 
 
 class DetailLevel(BaseModel):
     level: int
     label: str
-    region_ids: list[int] = []
-    edge_ids: list[int] = []
+    region_ids: list[int] = Field(default_factory=list)
+    edge_ids: list[int] = Field(default_factory=list)
     outlines: str = ""       # path to outlines PNG
     regions: str = ""        # path to coloured regions PNG
     values: str = ""         # path to value map PNG

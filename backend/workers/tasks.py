@@ -69,7 +69,7 @@ def run_pipeline(
      12. manifest         — manifest.json describing all outputs
     """
     from PIL import Image
-    from fpdf2 import FPDF
+    from fpdf import FPDF
 
     from ..preprocessing.processor import load_image
     from ..pipeline.line_art.processor import process_with_mask as line_art_with_mask

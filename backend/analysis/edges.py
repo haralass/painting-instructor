@@ -1,6 +1,7 @@
 from __future__ import annotations
 import cv2
 import numpy as np
+from scipy.ndimage import mean as ndimage_mean
 
 from .models import Edge
 from .preprocessing import ImageCache
@@ -70,18 +71,24 @@ def extract_edge_hierarchy(
     if fg_mask is not None:
         bg_mask = (fg_mask == 0)
 
-    # Precompute per-label stats if label_map given
+    # Precompute per-label stats if label_map given — vectorised, no per-label mask scan
     # label_stats is keyed by RAW label value (before Region.id mapping)
     label_stats: dict[int, dict] = {}
     if label_map is not None:
-        lab_img = cache.lab  # (H, W, 3) float64 in skimage LAB
-        for lbl in np.unique(label_map):
-            # label 0 IS valid — zero-based indexing, do NOT skip
-            mask = label_map == lbl
-            label_stats[int(lbl)] = {
-                "area": int(mask.sum()),
-                "mean_lab": lab_img[mask].mean(axis=0),
+        lab_img = cache.lab.astype(np.float32)
+        flat_lm = label_map.ravel()
+        unique_lbls = np.unique(flat_lm)
+        L_stats = ndimage_mean(lab_img[:, :, 0], label_map, unique_lbls)
+        a_stats = ndimage_mean(lab_img[:, :, 1], label_map, unique_lbls)
+        b_stats = ndimage_mean(lab_img[:, :, 2], label_map, unique_lbls)
+        area_lut = np.bincount(flat_lm, minlength=int(unique_lbls.max()) + 1)
+        label_stats = {
+            int(lbl): {
+                "mean_lab": np.array([float(L_stats[i]), float(a_stats[i]), float(b_stats[i])]),
+                "area": int(area_lut[lbl]),
             }
+            for i, lbl in enumerate(unique_lbls)
+        }
 
     edges: list[Edge] = []
     maps_primary   = np.zeros((H, W), dtype=np.uint8)

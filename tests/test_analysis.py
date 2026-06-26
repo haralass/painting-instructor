@@ -572,6 +572,43 @@ class TestEdgeRegionIDMapping:
         assert len(inter_region) > 0, "No inter-region edges found"
 
 
+class TestNotan7Zones:
+    def test_notan_7_zones_produces_7_grey_levels(self):
+        from backend.pipeline.artist_breakdown.processor import notan
+        from PIL import Image
+        import numpy as np
+        img = Image.fromarray(np.random.default_rng(1).integers(0, 255, (64, 64, 3), dtype=np.uint8))
+        result = notan(img, zones=7)
+        arr = np.array(result)
+        unique_grey = np.unique(arr[:, :, 0])  # notan is greyscale-ish
+        assert len(unique_grey) == 7, f"Expected 7 grey levels, got {len(unique_grey)}: {unique_grey}"
+
+    def test_compute_value_zones_7(self):
+        from backend.analysis.values import compute_value_zones
+        from backend.analysis.preprocessing import prepare
+        from PIL import Image
+        import numpy as np
+        img = Image.fromarray(np.random.default_rng(2).integers(0, 255, (64, 64, 3), dtype=np.uint8))
+        cache = prepare(img)
+        zone_map, zones = compute_value_zones(cache, 7)
+        assert len(zones) == 7
+        occupied = [z for z in zones if (zone_map == z.id).any()]
+        assert len(occupied) >= 6, f"Only {len(occupied)} of 7 zones are non-empty"
+
+    def test_value_zones_3_5_7_all_work(self):
+        from backend.analysis.values import compute_value_zones
+        from backend.analysis.preprocessing import prepare
+        from PIL import Image
+        import numpy as np
+        img = Image.fromarray(np.random.default_rng(3).integers(0, 255, (64, 64, 3), dtype=np.uint8))
+        cache = prepare(img)
+        for n in [3, 5, 7]:
+            zone_map, zones = compute_value_zones(cache, n)
+            assert len(zones) == n, f"Expected {n} zones, got {len(zones)}"
+            total = sum((zone_map == z.id).sum() for z in zones)
+            assert total == cache.H * cache.W, f"n={n}: zone coverage {total} != {cache.H * cache.W}"
+
+
 class TestValueZonesExtra:
     def test_seven_zones_produces_seven_levels(self):
         from backend.analysis.values import compute_value_zones

@@ -8,6 +8,8 @@ from pathlib import Path
 
 from celery import Celery
 
+from ..utils.paths import job_dir, rel_to_outputs, outputs_root
+
 log = logging.getLogger(__name__)
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -86,7 +88,7 @@ def run_pipeline(
     if not palette_size:
         palette_size = 12
 
-    out_dir = Path(f"outputs/{job_id}")
+    out_dir = job_dir(job_id)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     errors: dict[str, str] = {}
@@ -325,14 +327,8 @@ def _build_manifest(
     ref_suffix: str = ".jpg",
 ) -> dict:
     w, h = img.size
-    base = f"outputs/{job_id}"
 
-    def rel(p: str | None) -> str | None:
-        if not p:
-            return None
-        return str(Path(p).relative_to(Path("outputs"))) if "outputs" in p else p
-
-    classic_pages = [rel(p) for p in pages if not _is_hierarchical_asset(p) and p]
+    classic_pages = [rel_to_outputs(p) for p in pages if not _is_hierarchical_asset(p) and p]
 
     manifest = {
         "job_id": job_id,
@@ -349,8 +345,8 @@ def _build_manifest(
         "palette":        hier.get("palette", []),
         "colour_families":hier.get("colour_families", []),
         "value_zones":    hier.get("value_zone_list", []),
-        "video":  rel(video_path),
-        "pdf":    rel(pdf_path),
+        "video":  rel_to_outputs(video_path),
+        "pdf":    rel_to_outputs(pdf_path),
         "timings": timings,
         "errors": {k: v[:300] for k, v in errors.items()},  # truncate for JSON
     }

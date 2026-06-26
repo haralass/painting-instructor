@@ -52,6 +52,7 @@ def run_pipeline(
     value_zones: int = 5,
     texture_detail: bool = True,
     background_detail: bool = False,
+    region_complexity: int = 3,   # A6: 1–5 hierarchy resolution
     # backward-compat alias
     n_colors: int = 0,
 ) -> dict:
@@ -217,6 +218,7 @@ def run_pipeline(
             fg_mask=fg_mask,
             texture_detail=texture_detail,
             background_detail=background_detail,
+            region_complexity=region_complexity,  # A6
         )
         timings["hierarchical"] = round(time.perf_counter() - t0, 2)
         # Append hierarchical detail level outputs as additional pages
@@ -252,6 +254,7 @@ def run_pipeline(
         timings=timings,
         errors=errors,
         ref_suffix=suffix,
+        region_complexity=region_complexity,
     )
     prelim_manifest["status"] = "analysis_ready"
     manifest_path.write_text(json.dumps(prelim_manifest, indent=2))
@@ -316,6 +319,7 @@ def run_pipeline(
         timings=timings,
         errors=errors,
         ref_suffix=suffix,
+        region_complexity=region_complexity,
     )
     manifest_path.write_text(json.dumps(manifest, indent=2))
 
@@ -336,6 +340,22 @@ def _is_hierarchical_asset(path: str) -> bool:
     return p.parent.name.startswith("level_") or "level_" in p.stem
 
 
+def _normalize_detail_levels(detail_levels: dict) -> dict:
+    """A1: convert absolute asset paths in detail_levels to outputs-relative paths."""
+    result = {}
+    for k, lvl in detail_levels.items():
+        result[k] = {
+            "level":      lvl.get("level"),
+            "label":      lvl.get("label"),
+            "outlines":   rel_to_outputs(lvl.get("outlines")),
+            "regions":    rel_to_outputs(lvl.get("regions")),
+            "values":     rel_to_outputs(lvl.get("values")),
+            "colours":    rel_to_outputs(lvl.get("colours")),
+            "region_ids": lvl.get("region_ids", []),
+        }
+    return result
+
+
 def _build_manifest(
     job_id: str,
     img,
@@ -350,23 +370,30 @@ def _build_manifest(
     timings: dict,
     errors: dict,
     ref_suffix: str = ".jpg",
+    region_complexity: int = 3,
 ) -> dict:
     w, h = img.size
 
     classic_pages = [rel_to_outputs(p) for p in pages if not _is_hierarchical_asset(p) and p]
 
+    # A4: normalise individual edge-map paths
+    raw_edge_maps = hier.get("edge_maps", {})
+    edge_maps_rel = {name: rel_to_outputs(p) for name, p in raw_edge_maps.items() if p}
+
     manifest = {
         "job_id": job_id,
         "input": {
-            "medium":       medium,
-            "palette_size": palette_size,
-            "detail_level": detail_level,
-            "value_zones":  value_zones,
+            "medium":            medium,
+            "palette_size":      palette_size,
+            "detail_level":      detail_level,
+            "value_zones":       value_zones,
+            "region_complexity": region_complexity,
         },
         "image": {"width": w, "height": h},
         "reference": f"{job_id}/reference{ref_suffix}",
         "pages": classic_pages,
-        "detail_levels": hier.get("detail_levels", {}),
+        "detail_levels": _normalize_detail_levels(hier.get("detail_levels", {})),  # A1
+        "edge_maps":      edge_maps_rel,    # A4: individual sublayer maps
         "palette":        hier.get("palette", []),
         "colour_families":hier.get("colour_families", []),
         "value_zones":    hier.get("value_zone_list", []),

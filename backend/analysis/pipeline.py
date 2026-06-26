@@ -13,6 +13,7 @@ from .regions import build_region_hierarchy
 from .edges import extract_edge_hierarchy, render_outline_levels, export_edges_svg
 from .renderer import render_detail_levels
 from .models import _get_medium_strategy
+from ..utils.paths import rel_to_outputs
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ def run_hierarchical_analysis(
     seed: int = 42,
     texture_detail: bool = True,
     background_detail: bool = False,
+    region_complexity: int = 3,  # A6: 1–5, controls hierarchy resolution independently of palette
 ) -> dict:
     """
     Full hierarchical analysis pipeline.
@@ -63,6 +65,7 @@ def run_hierarchical_analysis(
         seed=seed,
         zone_map=zone_map,
         zones=zones,
+        region_complexity=region_complexity,  # A6
     )
 
     # Assign value_zone region_ids back to zone objects
@@ -121,7 +124,8 @@ def run_hierarchical_analysis(
         outline_composites=outline_composites,
         out_dir=out_dir,
         edges=edges,
-        medium_strategy=strategy,    # NEW
+        medium_strategy=strategy,
+        edge_maps=edge_maps,  # A9: pass individual maps for per-medium processing
     )
 
     # ── 6. Write regions JSON ─────────────────────────────────────────────────
@@ -141,16 +145,25 @@ def run_hierarchical_analysis(
     svg_path.write_text(svg_str)
 
     # ── Build return dict ─────────────────────────────────────────────────────
+    # A1: all asset paths are kept absolute here so callers can call .exists();
+    # tasks.py._build_manifest normalises them to relative paths before writing JSON.
     def _lvl_dict(dl):
         return {
             "level":      dl.level,
             "label":      dl.label,
-            "outlines":   dl.outlines,
+            "outlines":   dl.outlines,   # absolute — normalised in _build_manifest
             "regions":    dl.regions,
             "values":     dl.values,
             "colours":    dl.colours,
-            "region_ids": dl.region_ids[:200],  # truncate for JSON
+            "region_ids": dl.region_ids[:200],
         }
+
+    # A4: individual edge map absolute paths (normalised in _build_manifest)
+    _edge_map_paths = {
+        name: str(out_dir / f"edges_{name}.png")
+        for name in ("primary", "secondary", "decorative", "texture")
+        if (out_dir / f"edges_{name}.png").exists()
+    }
 
     return {
         "detail_levels":       {k: _lvl_dict(v) for k, v in detail_levels.items()},
@@ -159,10 +172,11 @@ def run_hierarchical_analysis(
         "value_zone_list":     [z.model_dump() for z in zones],
         "n_regions":           len(regions),
         "n_edges":             len(edges),
-        "value_zones_path":    zone_map_path,
+        "value_zones_path":    zone_map_path,   # absolute — for internal use
         "regions_json":        str(regions_path),
         "edges_json":          str(edges_path),
         "edges_svg":           str(svg_path),
         "edge_scale":          edge_scale,
         "label_to_region_id":  label_to_region_id,
+        "edge_maps":           _edge_map_paths,  # A4: individual maps for frontend sublayer toggles
     }

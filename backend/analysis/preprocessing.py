@@ -37,13 +37,37 @@ class ImageCache:
 
     @property
     def smooth(self) -> np.ndarray:
-        """Edge-preserving bilateral-smoothed RGB (float32 /255)."""
+        """
+        Edge-preserving bilateral-smoothed RGB.
+
+        For large images (>= 600px side), filtering is applied at a capped
+        working resolution and scaled back — this keeps runtime O(P_cap) rather
+        than O(P_full) while preserving edge quality.
+        """
         if self._smooth is None:
-            lab = cv2.cvtColor(self.bgr, cv2.COLOR_BGR2LAB)
+            _SMOOTH_CAP = 600   # max side for bilateral filtering
+            H, W = self.H, self.W
+            bgr = self.bgr
+
+            # Downscale if needed
+            scale = 1.0
+            max_side = max(H, W)
+            if max_side > _SMOOTH_CAP:
+                scale = _SMOOTH_CAP / max_side
+                small_w = max(1, int(W * scale))
+                small_h = max(1, int(H * scale))
+                bgr = cv2.resize(bgr, (small_w, small_h), interpolation=cv2.INTER_AREA)
+
+            lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
             for _ in range(3):
-                lab = cv2.bilateralFilter(lab, d=9, sigmaColor=75, sigmaSpace=75)
-            bgr = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-            self._smooth = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+                lab = cv2.bilateralFilter(lab, d=7, sigmaColor=60, sigmaSpace=60)
+            bgr_smooth = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+
+            # Upscale back to original resolution if we downscaled
+            if scale < 1.0:
+                bgr_smooth = cv2.resize(bgr_smooth, (W, H), interpolation=cv2.INTER_LINEAR)
+
+            self._smooth = cv2.cvtColor(bgr_smooth, cv2.COLOR_BGR2RGB)
         return self._smooth
 
 

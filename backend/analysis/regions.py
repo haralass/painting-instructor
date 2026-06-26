@@ -47,10 +47,15 @@ def build_region_hierarchy(
     n_value_zones: int,
     value_colour_families: dict,
     seed: int = 42,
+    zone_map: np.ndarray | None = None,
+    zones: list | None = None,
 ) -> tuple[dict[str, np.ndarray], list[Region]]:
     """
     Build a 5-level hierarchy using a single SLIC base segmentation +
     agglomerative merge tree.
+
+    Pass pre-computed zone_map/zones to avoid recomputing them inside
+    (pipeline.py already computes them; passing avoids a redundant O(P) pass).
 
     Raises on failure — caller (Celery task) is responsible for catching and
     setting task state to FAILURE.
@@ -61,7 +66,8 @@ def build_region_hierarchy(
     regions    : flat list of Region objects across all 5 levels
     """
     return _build_merge_tree_hierarchy(
-        cache, palette_size, detail_level, n_value_zones, value_colour_families, seed
+        cache, palette_size, detail_level, n_value_zones, value_colour_families, seed,
+        zone_map=zone_map, zones=zones,
     )
 
 
@@ -95,10 +101,13 @@ def _build_merge_tree_hierarchy(
     n_value_zones: int,
     value_colour_families: dict,
     seed: int,
+    zone_map: np.ndarray | None = None,
+    zones: list | None = None,
 ) -> tuple[dict[str, np.ndarray], list[Region]]:
     H, W = cache.H, cache.W
     smooth_rgb = cache.smooth
-    zone_map, zones = compute_value_zones(cache, n_value_zones)
+    if zone_map is None or zones is None:
+        zone_map, zones = compute_value_zones(cache, n_value_zones)
     lab_img = cache.lab
     grad = cache.grad
 

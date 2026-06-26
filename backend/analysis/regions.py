@@ -56,18 +56,17 @@ def build_region_hierarchy(
     Build a 5-level hierarchy using a single SLIC base segmentation +
     agglomerative merge tree.
 
+    Raises on failure — caller (Celery task) is responsible for catching and
+    setting task state to FAILURE.
+
     Returns
     -------
     label_maps : dict  "l1".."l5" → (H,W) int32 label array
     regions    : flat list of Region objects across all 5 levels
     """
-    try:
-        return _build_merge_tree_hierarchy(
-            cache, palette_size, detail_level, n_value_zones, value_colour_families, seed
-        )
-    except Exception as exc:
-        log.error("Merge-tree hierarchy failed, using trivial fallback: %s", exc)
-        return _trivial_fallback(cache, n_value_zones, value_colour_families)
+    return _build_merge_tree_hierarchy(
+        cache, palette_size, detail_level, n_value_zones, value_colour_families, seed
+    )
 
 
 def _compute_region_targets(cache: ImageCache, n_base: int) -> list[int]:

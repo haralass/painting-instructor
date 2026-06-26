@@ -179,9 +179,12 @@ def run_pipeline(
         pages.append(save("light_direction", r))
 
     # ── Step 7: Color by number ───────────────────────────────────────────────
+    # Perf: O(P×E) full-image mask comparisons have been eliminated via per-label
+    # LUT precomputation in color_by_number/processor.py.
     cbn_result = run("color_by_number", lambda: color_by_number(img, n_colors=palette_size))
     if cbn_result:
         pages.append(save("color_by_number", cbn_result))
+    log.info("color_by_number timing: %.2fs", timings.get("color_by_number", 0.0))
 
     # ── Step 8: Dot to dot (reuses line art — no second edge detection) ───────
     r = run("dot_to_dot", lambda: dot_to_dot(

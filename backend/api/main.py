@@ -51,7 +51,7 @@ _CELERY_TO_STATUS = {
     "RECEIVED": "queued",
     "STARTED":  "processing",
     "PROGRESS": "processing",
-    "SUCCESS":  "completed",
+    "SUCCESS":  "completed",           # may be refined to completed_with_warnings below
     "FAILURE":  "failed",
     "RETRY":    "processing",
     "REVOKED":  "failed",
@@ -133,12 +133,15 @@ def get_job(job_id: str) -> JobResponse:
         # Convert absolute paths to /outputs/... URLs
         pages_urls = [_path_to_url(p, job_id) for p in pages if p]
         manifest_url = f"/outputs/{job_id}/manifest.json"
+        warnings = result.get("warnings", [])
+        status_str = "completed_with_warnings" if warnings else "completed"
+        message = f"Tutorial ready (warnings: {', '.join(warnings)})" if warnings else "Tutorial ready"
         return JobResponse(
             job_id=job_id,
-            status="completed",
+            status=status_str,
             progress=100,
             step="completed",
-            message="Tutorial ready",
+            message=message,
             result=JobResult(
                 manifest=manifest_url,
                 pages=pages_urls,

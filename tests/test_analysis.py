@@ -609,6 +609,31 @@ class TestNotan7Zones:
             assert total == cache.H * cache.W, f"n={n}: zone coverage {total} != {cache.H * cache.W}"
 
 
+def test_palette_size_does_not_control_region_count():
+    """Same image with palette_size=6 and palette_size=20 → similar region counts per level."""
+    from backend.analysis.regions import build_region_hierarchy
+    from backend.analysis.colours import extract_colour_families
+    from backend.analysis.preprocessing import prepare
+    img = Image.fromarray(np.random.default_rng(99).integers(0, 255, (64, 64, 3), dtype=np.uint8))
+    cache = prepare(img)
+
+    _, _, internal6  = extract_colour_families(cache, palette_size=6)
+    _, _, internal20 = extract_colour_families(cache, palette_size=20)
+
+    lmaps6,  regs6  = build_region_hierarchy(cache, 6,  3, 3, internal6)
+    lmaps20, regs20 = build_region_hierarchy(cache, 20, 3, 3, internal20)
+
+    for lvl in ["l1", "l2", "l3", "l4", "l5"]:
+        count6  = len([r for r in regs6  if r.scale == lvl])
+        count20 = len([r for r in regs20 if r.scale == lvl])
+        # Counts should be within 3× of each other (adaptive, not palette-locked)
+        ratio = max(count6, count20) / max(1, min(count6, count20))
+        assert ratio < 3.0, (
+            f"Level {lvl}: palette 6→{count6} regions, palette 20→{count20} regions — "
+            f"ratio {ratio:.1f} suggests palette_size still controls region count"
+        )
+
+
 class TestValueZonesExtra:
     def test_seven_zones_produces_seven_levels(self):
         from backend.analysis.values import compute_value_zones

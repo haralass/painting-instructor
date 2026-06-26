@@ -1,4 +1,4 @@
-# Core
+# Core API & task queue
 fastapi>=0.115
 uvicorn[standard]>=0.30
 celery[redis]>=5.4
@@ -6,6 +6,7 @@ redis>=5.0
 pydantic>=2.0
 python-multipart>=0.0.9
 aiofiles>=23.0
+python-dotenv>=1.0
 
 # Image processing
 pillow>=10.0
@@ -15,24 +16,17 @@ scikit-learn>=1.4
 scikit-image>=0.23
 scipy>=1.12
 
-# Colorimetry — proper sRGB→XYZ→CCT (not HSV heuristics)
+# Colorimetry
 colour-science>=0.4.4
 
-# Line art — informative-drawings CVPR 2022, ONNX, CPU-fast
-controlnet-aux>=0.0.7
-onnxruntime>=1.18
+# Wavelet smoothing (color_by_number contours)
+PyWavelets>=1.6
 
-# Dot-to-dot — Weighted Voronoi Stippling + TSP
-numba>=0.59
-python-tsp>=0.4
+# Skeleton graph (dot_to_dot)
+sknw>=0.14
 
 # PDF assembly
 fpdf2>=2.7
 
-# Preprocessing
-pyiqa>=0.1.10
-rembg[gpu]>=2.0.50
-
-# Dev
-pytest>=8.0
-httpx>=0.27
+# Geometry (edge contour JSON/SVG export)
+shapely>=2.0

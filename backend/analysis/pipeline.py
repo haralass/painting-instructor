@@ -1,0 +1,135 @@
+from __future__ import annotations
+import json
+import logging
+from pathlib import Path
+
+import numpy as np
+from PIL import Image
+
+from .preprocessing import prepare
+from .values import compute_value_zones, render_value_map
+from .colours import extract_colour_families
+from .regions import build_region_hierarchy
+from .edges import extract_edge_hierarchy, render_outline_levels
+from .renderer import render_detail_levels
+
+log = logging.getLogger(__name__)
+
+
+def run_hierarchical_analysis(
+    img: Image.Image,
+    out_dir: Path,
+    palette_size: int,
+    detail_level: int,
+    value_zones: int,
+    medium: str,
+    fg_mask: np.ndarray | None = None,
+    seed: int = 42,
+) -> dict:
+    """
+    Full hierarchical analysis pipeline.
+
+    Returns a dict suitable for embedding in the task manifest, with keys:
+      detail_levels, palette, colour_families, value_zone_list
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    cache = prepare(img)
+
+    # ── 1. Value zones ────────────────────────────────────────────────────────
+    zone_map, zones = compute_value_zones(cache, value_zones)
+    zone_map_path   = str(out_dir / "value_zones.png")
+    value_img       = render_value_map(zone_map, zones)
+    Image.fromarray(np.stack([value_img] * 3, axis=-1) if value_img.ndim == 2 else value_img).save(zone_map_path)
+
+    # ── 2. Colour families ────────────────────────────────────────────────────
+    families, palette, colour_internal = extract_colour_families(
+        cache, palette_size=palette_size, seed=seed
+    )
+
+    # ── 3. Multi-scale region hierarchy ───────────────────────────────────────
+    label_maps, regions = build_region_hierarchy(
+        cache=cache,
+        palette_size=palette_size,
+        detail_level=detail_level,
+        n_value_zones=value_zones,
+        value_colour_families=colour_internal,
+        seed=seed,
+    )
+
+    # Assign value_zone region_ids back to zone objects
+    for z in zones:
+        z.region_ids = [r.id for r in regions if r.value_zone == z.id]
+
+    # Assign colour family linked_region_ids
+    for f in families:
+        f.linked_region_ids = [r.id for r in regions if r.colour_family_id == f.id]
+
+    # ── 4. Edge hierarchy ─────────────────────────────────────────────────────
+    # Use finest available label map for edge context
+    label_map_for_edges = None
+    for sc in ["micro", "fine", "medium", "coarse"]:
+        if sc in label_maps:
+            label_map_for_edges = label_maps[sc]
+            break
+
+    edges, edge_maps = extract_edge_hierarchy(cache, label_map_for_edges, fg_mask)
+    outline_composites = render_outline_levels(edge_maps)
+
+    # Save individual outline composites
+    from PIL import Image as PILImage
+    for name, arr in outline_composites.items():
+        PILImage.fromarray(arr).save(str(out_dir / f"{name}.png"))
+
+    # Save edge map maps (raw binary)
+    for name, arr in edge_maps.items():
+        PILImage.fromarray(255 - arr).save(str(out_dir / f"edges_{name}.png"))
+
+    # ── 5. Render 5 detail levels ─────────────────────────────────────────────
+    detail_levels = render_detail_levels(
+        cache=cache,
+        label_maps=label_maps,
+        regions=regions,
+        families=families,
+        value_zones=zones,
+        zone_map=zone_map,
+        outline_composites=outline_composites,
+        out_dir=out_dir,
+    )
+
+    # ── 6. Write regions JSON ─────────────────────────────────────────────────
+    regions_path = out_dir / "regions.json"
+    regions_path.write_text(json.dumps(
+        [r.model_dump() for r in regions], indent=2
+    ))
+
+    # ── 7. Write edges JSON ───────────────────────────────────────────────────
+    edges_path = out_dir / "edges.json"
+    edges_path.write_text(json.dumps(
+        [e.model_dump() for e in edges[:5000]], indent=2  # cap to avoid huge files
+    ))
+
+    # ── Build return dict ─────────────────────────────────────────────────────
+    def _lvl_dict(dl):
+        return {
+            "level":      dl.level,
+            "label":      dl.label,
+            "outlines":   dl.outlines,
+            "regions":    dl.regions,
+            "values":     dl.values,
+            "colours":    dl.colours,
+            "region_ids": dl.region_ids[:200],  # truncate for JSON
+        }
+
+    return {
+        "detail_levels":    {k: _lvl_dict(v) for k, v in detail_levels.items()},
+        "palette":          [p.model_dump() for p in palette],
+        "colour_families":  [f.model_dump() for f in families],
+        "value_zone_list":  [z.model_dump() for z in zones],
+        "n_regions":        len(regions),
+        "n_edges":          len(edges),
+        "value_zones_path": zone_map_path,
+        "regions_json":     str(regions_path),
+        "edges_json":       str(edges_path),
+    }

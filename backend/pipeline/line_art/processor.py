@@ -4,7 +4,8 @@ import numpy as np
 import PIL.ImageOps
 from PIL import Image
 
-_lineart_det = None
+_lineart_det  = None
+_rembg_sess   = None
 
 
 def _patch_mediapipe() -> None:
@@ -53,7 +54,7 @@ def _xdog(img_gray: np.ndarray, sigma: float = 0.4,
     return (result * 255).astype(np.uint8)
 
 
-def process(img: Image.Image, resolution: int = 1024) -> Image.Image:
+def _process_internal(img: Image.Image, resolution: int = 1024) -> tuple[Image.Image, np.ndarray | None]:
     """
     Professional-grade composite line art for artists.
 
@@ -79,11 +80,13 @@ def process(img: Image.Image, resolution: int = 1024) -> Image.Image:
     interior = np.array(raw_la.convert("L"))   # white lines on black
 
     # ── Subject mask ──────────────────────────────────────────────────────
+    global _rembg_sess
     fg_mask = None
     try:
         from rembg import remove, new_session
-        sess    = new_session("birefnet-portrait")
-        rgba    = remove(img, session=sess)
+        if _rembg_sess is None:
+            _rembg_sess = new_session("birefnet-portrait")
+        rgba    = remove(img, session=_rembg_sess)
         alpha   = np.array(rgba)[:, :, 3]
         fg_mask = (alpha > 128).astype(np.uint8)
     except Exception:
@@ -124,7 +127,18 @@ def process(img: Image.Image, resolution: int = 1024) -> Image.Image:
     kernel   = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
     closed   = cv2.morphologyEx(inverted, cv2.MORPH_CLOSE, kernel)
 
-    return Image.fromarray(closed).convert("RGB")
+    return Image.fromarray(closed).convert("RGB"), fg_mask
+
+
+def process(img: Image.Image, resolution: int = 1024) -> Image.Image:
+    """Public API — returns only the line art image (fg_mask discarded)."""
+    result, _ = _process_internal(img, resolution)
+    return result
+
+
+def process_with_mask(img: Image.Image, resolution: int = 1024) -> tuple[Image.Image, np.ndarray | None]:
+    """Returns (line_art_image, fg_mask) — use when dot_to_dot needs the mask."""
+    return _process_internal(img, resolution)
 
 
 def detect_raw(img: Image.Image, resolution: int = 1024) -> Image.Image:

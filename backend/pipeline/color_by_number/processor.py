@@ -9,6 +9,8 @@ from scipy import ndimage
 from scipy.ndimage import distance_transform_edt
 from shapely.geometry import Point, MultiPoint
 
+_bisenet_model = None
+
 
 def _font(size: int) -> ImageFont.FreeTypeFont:
     for p in ["/System/Library/Fonts/HelveticaNeue.ttc",
@@ -40,11 +42,14 @@ def _face_zone_edges(img_rgb: np.ndarray) -> np.ndarray | None:
            16=cloth, 17=hair, 18=hat
     Returns a (H,W) uint8 zone map, or None if facexlib unavailable.
     """
+    global _bisenet_model
     try:
         import torch
         from facexlib.parsing import init_parsing_model
         H, W = img_rgb.shape[:2]
-        model = init_parsing_model(model_name='bisenet', device='cpu')
+        if _bisenet_model is None:
+            _bisenet_model = init_parsing_model(model_name='bisenet', device='cpu')
+        model = _bisenet_model
         t = torch.from_numpy(img_rgb).permute(2, 0, 1).float().unsqueeze(0) / 255.0
         with torch.no_grad():
             raw = model(t)
@@ -120,22 +125,22 @@ def process(
     zone_map = _face_zone_edges(smooth_rgb) if use_face_parsing else None
 
     # 4. RAG merge with binary search toward n_colors
+    # Build the graph ONCE and apply face-zone penalties ONCE, then copy per iteration.
+    g_base = sk_graph.rag_mean_color(smooth_rgb, labels_slic)
+    if zone_map is not None:
+        for n1, n2 in list(g_base.edges()):
+            mask1 = labels_slic == n1
+            mask2 = labels_slic == n2
+            z1 = int(np.bincount(zone_map[mask1].ravel()).argmax())
+            z2 = int(np.bincount(zone_map[mask2].ravel()).argmax())
+            if z1 != z2 and z1 != 0 and z2 != 0:
+                g_base[n1][n2]['weight'] = 1e6
+
     lo, hi = 2.0, 100.0
     best_labels = labels_slic
     for _ in range(25):
-        mid = (lo + hi) / 2.0
-        g   = sk_graph.rag_mean_color(smooth_rgb, labels_slic)
-        if zone_map is not None:
-            # penalise edges that cross face-zone boundaries (weight → very high)
-            for edge in g.edges():
-                n1, n2 = edge
-                mask1  = labels_slic == n1
-                mask2  = labels_slic == n2
-                z1 = int(np.bincount(zone_map[mask1].ravel()).argmax())
-                z2 = int(np.bincount(zone_map[mask2].ravel()).argmax())
-                if z1 != z2 and z1 != 0 and z2 != 0:
-                    g[n1][n2]['weight'] = 1e6
-        merged = sk_graph.cut_threshold(labels_slic, g, thresh=mid)
+        mid    = (lo + hi) / 2.0
+        merged = sk_graph.cut_threshold(labels_slic, g_base.copy(), thresh=mid)
         n_reg  = len(np.unique(merged))
         if n_reg > n_colors:
             lo = mid

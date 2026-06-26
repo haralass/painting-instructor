@@ -85,6 +85,9 @@ def build_region_hierarchy(
         lab_img = cache.lab
         grad    = cache.grad
 
+        # Build a mapping from coarse source_label → region_id for parent lookup
+        coarse_lbl_to_rid: dict[int, int] = {}
+
         for lbl in uniq:
             mask = labels == lbl
             area = int(mask.sum())
@@ -116,18 +119,19 @@ def build_region_hierarchy(
             # Colour family id: index of nearest palette centre
             cf_id = _nearest_colour_family(mean_lab, value_colour_families)
 
-            # Parent region: nearest coarse-scale region at centroid
+            # Parent region: look up the coarse region that covers this centroid
             parent_id: int | None = None
             if coarse_labels is not None and scale != "coarse":
                 cy_i, cx_i = int(round(cy)), int(round(cx))
                 cy_i = np.clip(cy_i, 0, cache.H - 1)
                 cx_i = np.clip(cx_i, 0, cache.W - 1)
                 parent_lbl = int(coarse_labels[cy_i, cx_i])
-                if parent_lbl > 0:
-                    parent_id = parent_lbl + (1_000_000 if scale != "coarse" else 0)
+                parent_id = coarse_lbl_to_rid.get(parent_lbl)
 
             all_regions.append(Region(
                 id=region_id,
+                source_label=int(lbl),
+                scale=scale,
                 parent_id=parent_id,
                 level=level_idx,
                 area=area,
@@ -140,6 +144,8 @@ def build_region_hierarchy(
                 importance=importance,
                 texture_score=texture,
             ))
+            if scale == "coarse":
+                coarse_lbl_to_rid[int(lbl)] = region_id
             region_id += 1
 
         if scale == "coarse":

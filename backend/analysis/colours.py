@@ -118,7 +118,10 @@ def render_flat_colour(
     out  = np.full((H, W, 3), bg, dtype=np.uint8)
 
     for region in regions:
-        mask = label_map == region.id
+        lbl = getattr(region, "source_label", None)
+        if lbl is None:
+            lbl = region.id
+        mask = label_map == lbl
         if not mask.any():
             continue
         cf_id = min(region.colour_family_id, len(families) - 1)

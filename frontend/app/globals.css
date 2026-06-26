@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #0f0e0d;
+  --surface: #1a1916;
+  --border: #2e2c29;
+  --accent: #c8965a;
+  --accent-dim: #9a7040;
+  --text: #e8e4de;
+  --text-dim: #8a8580;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}

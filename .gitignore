@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# Outputs (generated files — not tracked)
+outputs/
+*.mp4
+*.pdf
+
+# Model weights (downloaded at runtime)
+*.pth
+*.ckpt
+*.pt
+
+# Node
+node_modules/
+.next/
+.turbo/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# macOS
+.DS_Store
+*.DS_Store
+
+# Editors
+.vscode/
+.idea/
+*.swp

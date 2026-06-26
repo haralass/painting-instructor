@@ -1,0 +1,37 @@
+# Core
+fastapi>=0.115
+uvicorn[standard]>=0.30
+celery[redis]>=5.4
+redis>=5.0
+pydantic>=2.0
+python-multipart>=0.0.9
+
+# Image processing
+pillow>=10.0
+numpy>=1.26
+opencv-python>=4.9
+scikit-learn>=1.4
+scikit-image>=0.23
+scipy>=1.12
+
+# Colorimetry — proper sRGB→XYZ→CCT (not HSV heuristics)
+colour-science>=0.4.4
+
+# Line art — informative-drawings CVPR 2022, ONNX, CPU-fast
+controlnet-aux>=0.0.7
+onnxruntime>=1.18
+
+# Dot-to-dot — Weighted Voronoi Stippling + TSP
+numba>=0.59
+python-tsp>=0.4
+
+# PDF assembly
+fpdf2>=2.7
+
+# Preprocessing
+pyiqa>=0.1.10
+rembg[gpu]>=2.0.50
+
+# Dev
+pytest>=8.0
+httpx>=0.27

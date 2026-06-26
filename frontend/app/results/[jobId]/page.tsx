@@ -105,6 +105,7 @@ type Manifest = {
     texture_detail?: boolean;
   };
   image: { width: number; height: number };
+  reference?: string;
   pages: string[];
   detail_levels: Record<string, {
     level: number; label: string;
@@ -251,6 +252,11 @@ export default function ResultsPage() {
   // ── Results layout ─────────────────────────────────────────────────────────
   const videoUrl = manifest?.video ? absUrl(manifest.video) : absUrl(`/outputs/${jobId}/tutorial.mp4`);
   const pdfUrl   = manifest?.pdf   ? absUrl(manifest.pdf)   : absUrl(`/outputs/${jobId}/tutorial_book.pdf`);
+
+  // Reference image URL: use manifest.reference if available, fall back to line_art
+  const referenceUrl = manifest?.reference
+    ? `${API}/outputs/${manifest.reference}`
+    : absUrl(`/outputs/${jobId}/line_art.png`);
 
   const currentLevelData = manifest?.detail_levels?.[String(detailLevel)];
 
@@ -427,7 +433,7 @@ export default function ResultsPage() {
             <ImageDisplay
               compareMode={compareMode}
               analysisUrl={selected ? selected.url : levelLayerUrl(activeLayer)}
-              referenceUrl={absUrl(`/outputs/${jobId}/line_art.png`)}
+              referenceUrl={referenceUrl}
               opacity={opacity}
               levelUrl={levelLayerUrl(activeLayer)}
               title={selected ? selected.title : (currentLevelData?.label ?? "")}

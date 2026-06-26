@@ -56,6 +56,19 @@ def extract_edge_hierarchy(
     if fg_mask is not None:
         bg_mask = (fg_mask == 0)
 
+    # Precompute per-label stats if label_map given
+    label_stats: dict[int, dict] = {}
+    if label_map is not None:
+        lab_img = cache.lab  # (H, W, 3) float64 in skimage LAB
+        for lbl in np.unique(label_map):
+            if lbl == 0:
+                continue
+            mask = label_map == lbl
+            label_stats[int(lbl)] = {
+                "area": int(mask.sum()),
+                "mean_lab": lab_img[mask].mean(axis=0),
+            }
+
     edges: list[Edge] = []
     maps_primary   = np.zeros((H, W), dtype=np.uint8)
     maps_secondary = np.zeros((H, W), dtype=np.uint8)
@@ -95,6 +108,28 @@ def extract_edge_hierarchy(
         if not include_background and in_bg:
             continue
 
+        # Sample neighbouring regions using offsets around contour midpoint
+        ra, rb = 0, None
+        if label_map is not None:
+            mid_idx = len(pts) // 2
+            mx_m, my_m = int(pts[mid_idx][0]), int(pts[mid_idx][1])
+            for dx, dy in [(-2, 0), (2, 0), (0, -2), (0, 2)]:
+                nx, ny = mx_m + dx, my_m + dy
+                if 0 <= nx < W and 0 <= ny < H:
+                    lbl = int(label_map[ny, nx])
+                    if lbl > 0:
+                        if ra == 0:
+                            ra = lbl
+                        elif lbl != ra:
+                            rb = lbl
+                            break
+
+        # Use region stats for colour difference classification
+        colour_diff = 0.0
+        if ra and rb and ra in label_stats and rb in label_stats:
+            diff = label_stats[ra]["mean_lab"] - label_stats[rb]["mean_lab"]
+            colour_diff = float(np.linalg.norm(diff)) / 100.0
+
         importance = arc_norm * 0.6 + mean_grad * 0.4
         if in_bg:
             importance *= 0.3
@@ -114,8 +149,8 @@ def extract_edge_hierarchy(
 
         edges.append(Edge(
             id=eid,
-            region_a=0,
-            region_b=None,
+            region_a=ra,
+            region_b=rb,
             type=etype,
             strength=mean_grad,
             hardness=float(np.clip(mean_grad * 1.5, 0, 1)),

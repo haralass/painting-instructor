@@ -215,6 +215,7 @@ def _build_merge_tree_hierarchy(
         merges.append((ra, rb, cost, new_id))
 
         # Merge adjacency lists: new_id inherits all neighbours of ra + rb
+        # Use average-linkage with merged LAB statistics for cost recomputation
         neighbours_a = set(root_adj.get(ra, {}).keys()) - {ra, rb}
         neighbours_b = set(root_adj.get(rb, {}).keys()) - {ra, rb}
         new_adj: dict[int, float] = {}
@@ -222,13 +223,16 @@ def _build_merge_tree_hierarchy(
             nb_root = uf.find(nb)
             if nb_root == new_id:
                 continue
-            cost_a = root_adj.get(ra, {}).get(nb, None)
-            cost_b = root_adj.get(rb, {}).get(nb, None)
-            # Use minimum linkage
-            candidates = [c for c in [cost_a, cost_b] if c is not None]
-            if candidates:
-                new_cost = min(candidates)
-                new_adj[nb_root] = min(new_adj.get(nb_root, float("inf")), new_cost)
+            # Recompute cost using merged LAB and area-based size factor
+            nb_lab  = node_lab.get(nb_root, lab_merged)
+            nb_area = node_area.get(nb_root, 1)
+            lab_diff = float(np.linalg.norm(lab_merged - nb_lab))
+            # Area penalty: small regions merge more easily
+            size_factor = 1.0 + 0.3 * float(np.log1p(
+                min(total, nb_area) / max(total, nb_area, 1)
+            ))
+            new_cost = lab_diff / size_factor
+            new_adj[nb_root] = min(new_adj.get(nb_root, float("inf")), new_cost)
 
         for nb, new_cost in new_adj.items():
             root_adj[new_id][nb] = new_cost

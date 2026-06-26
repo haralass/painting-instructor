@@ -32,6 +32,7 @@ export default function HomePage() {
   const [paletteSize, setPaletteSize] = useState(12);
   const [detailLevel, setDetailLevel] = useState(3);
   const [valueZones,  setValueZones]  = useState<3 | 5 | 7>(5);
+  const [regionComplexity, setRegionComplexity] = useState(3);
   const [textureDetail, setTextureDetail] = useState(true);
   const [bgDetail,      setBgDetail]      = useState(false);
   const [dragging,    setDragging]    = useState(false);
@@ -83,6 +84,7 @@ export default function HomePage() {
       form.append("palette_size", String(paletteSize));
       form.append("detail_level", String(detailLevel));
       form.append("value_zones",  String(valueZones));
+      form.append("region_complexity",  String(regionComplexity));
       form.append("texture_detail",    String(textureDetail));
       form.append("background_detail", String(bgDetail));
 
@@ -235,6 +237,24 @@ export default function HomePage() {
           {selectedDetail && (
             <p className="text-xs mt-2" style={{ color: "var(--text-dim)" }}>{selectedDetail.desc}</p>
           )}
+        </div>
+
+        {/* Region complexity */}
+        <div>
+          <label className="block text-sm font-medium mb-3" style={{ color: "var(--text-dim)" }}>
+            Region complexity — <span style={{ color: "var(--accent)" }}>
+              {["", "Minimal", "Simplified", "Balanced", "Detailed", "Maximum"][regionComplexity]}
+            </span>
+          </label>
+          <input type="range" min={1} max={5} step={1} value={regionComplexity}
+                 onChange={e => setRegionComplexity(Number(e.target.value))}
+                 className="w-full accent-yellow-600" />
+          <div className="flex justify-between text-xs mt-1" style={{ color: "var(--text-dim)" }}>
+            <span>1 (fewer, broader)</span><span>5 (more, finer)</span>
+          </div>
+          <p className="text-xs mt-1" style={{ color: "var(--text-dim)" }}>
+            Controls how many superpixels seed the hierarchy. Higher = more regions per level.
+          </p>
         </div>
 
         {/* Texture + background detail toggles */}

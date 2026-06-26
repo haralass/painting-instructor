@@ -72,6 +72,13 @@ const LEVEL_LABELS: Record<number, string> = {
 const LAYER_KEYS = ["outlines", "regions", "values", "colours"] as const;
 type LayerKey = typeof LAYER_KEYS[number];
 
+const LAYER_LABELS: Record<string, string> = {
+  outlines: "Outlines",
+  values:   "Values",
+  colours:  "Colours",
+  regions:  "Regions",
+};
+
 const CLASSIC_PAGE_KEYS = [
   "line_art", "notan", "color_temperature", "color_palette",
   "light_direction", "color_by_number", "dot_to_dot",
@@ -151,14 +158,19 @@ export default function ResultsPage() {
 
   // Hierarchical controls
   const [detailLevel,  setDetailLevel]  = useState(3);
-  const [activeLayer,  setActiveLayer]  = useState<LayerKey>("outlines");
   const [compareMode,  setCompareMode]  = useState<CompareMode>("analysis");
   const [opacity,      setOpacity]      = useState(0.5);
 
-  // Layer visibility toggles
-  const [layerVis, setLayerVis] = useState<Record<LayerKey, boolean>>({
-    outlines: true, regions: true, values: true, colours: true,
+  // Independent layer toggles — each can be on/off simultaneously
+  const [layers, setLayers] = useState<Record<string, boolean>>({
+    colours:  true,
+    values:   false,
+    outlines: true,
+    regions:  false,
   });
+  function toggleLayer(key: string) {
+    setLayers(prev => ({ ...prev, [key]: !prev[key] }));
+  }
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -260,19 +272,21 @@ export default function ResultsPage() {
 
   const currentLevelData = manifest?.detail_levels?.[String(detailLevel)];
 
-  // URL for the currently selected hierarchical layer at the current detail level
-  function levelLayerUrl(layer: LayerKey): string {
-    if (!currentLevelData) return "";
-    const p = currentLevelData[layer];
-    return p ? absUrl(p) : "";
-  }
+  // Compute the ordered list of asset URLs for all active layers at the current level
+  const LAYER_ASSET_KEY: Record<string, keyof NonNullable<typeof currentLevelData>> = {
+    outlines: "outlines",
+    values:   "values",
+    colours:  "colours",
+    regions:  "regions",
+  };
 
-  // What to show in the main canvas area
-  function mainImageUrl(): string {
-    if (selected && compareMode === "analysis") return selected.url;
-    if (currentLevelData) return levelLayerUrl(activeLayer);
-    return selected?.url ?? "";
-  }
+  const activeAssets: string[] = Object.entries(layers)
+    .filter(([, vis]) => vis)
+    .map(([key]) => {
+      const assetPath = currentLevelData?.[LAYER_ASSET_KEY[key]];
+      return assetPath ? `${API}/outputs/${assetPath}` : null;
+    })
+    .filter((u): u is string => Boolean(u));
 
   return (
     <main className="min-h-screen flex flex-col" style={{ background: "var(--bg)" }}>
@@ -364,19 +378,24 @@ export default function ResultsPage() {
                 <span>Foundation</span><span>Full Reference</span>
               </div>
 
-              {/* Layer toggle buttons */}
+              {/* Independent layer toggles */}
               <div className="flex gap-2 mt-3 flex-wrap">
-                {LAYER_KEYS.map(k => (
-                  <button key={k}
-                          onClick={() => { setActiveLayer(k); setCompareMode("analysis"); setSelected(null); }}
-                          className="px-3 py-1 rounded border text-xs transition-colors"
-                          style={{
-                            background:  (activeLayer === k && compareMode !== "analysis") || (selected === null && activeLayer === k)
-                                           ? "var(--accent)" : "var(--surface)",
-                            color:       (activeLayer === k && !selected) ? "#0f0e0d" : "var(--text)",
-                            borderColor: "var(--border)",
-                          }}>
-                    {k.charAt(0).toUpperCase() + k.slice(1)}
+                {Object.entries(layers).map(([key, vis]) => (
+                  <button
+                    key={key}
+                    onClick={() => toggleLayer(key)}
+                    style={{
+                      background:   vis ? "var(--accent)" : "var(--surface)",
+                      color:        vis ? "#0f0e0d"       : "var(--text)",
+                      border:       `1px solid ${vis ? "var(--accent)" : "var(--border)"}`,
+                      padding:      "6px 14px",
+                      borderRadius: 8,
+                      fontSize:     13,
+                      fontWeight:   500,
+                      cursor:       "pointer",
+                    }}
+                  >
+                    {vis ? "✓ " : ""}{LAYER_LABELS[key] ?? key}
                   </button>
                 ))}
               </div>
@@ -432,10 +451,12 @@ export default function ResultsPage() {
           <div className="p-4 flex-1">
             <ImageDisplay
               compareMode={compareMode}
-              analysisUrl={selected ? selected.url : levelLayerUrl(activeLayer)}
+              analysisUrl={selected ? selected.url : undefined}
+              activeAssets={selected ? [] : activeAssets}
               referenceUrl={referenceUrl}
               opacity={opacity}
-              levelUrl={levelLayerUrl(activeLayer)}
+              imageWidth={manifest?.image?.width}
+              imageHeight={manifest?.image?.height}
               title={selected ? selected.title : (currentLevelData?.label ?? "")}
             />
 
@@ -575,27 +596,76 @@ export default function ResultsPage() {
   );
 }
 
+// ── Layered image composition ─────────────────────────────────────────────────
+function LayerStack({
+  assets,
+  imageWidth,
+  imageHeight,
+  maxHeight = 520,
+}: {
+  assets:      string[];
+  imageWidth?:  number;
+  imageHeight?: number;
+  maxHeight?:   number;
+}) {
+  if (assets.length === 0) {
+    return (
+      <div style={{ padding: 40, textAlign: "center", color: "var(--text-dim)", background: "var(--surface)", borderRadius: 12 }}>
+        No layers selected — enable at least one above
+      </div>
+    );
+  }
+
+  const aspectStyle = imageWidth && imageHeight
+    ? { aspectRatio: `${imageWidth}/${imageHeight}` }
+    : {};
+
+  return (
+    <div style={{ position: "relative", width: "100%", maxHeight, overflow: "hidden", borderRadius: 12, ...aspectStyle }}>
+      {assets.map((url, i) => (
+        <img
+          key={url}
+          src={url}
+          alt=""
+          style={{
+            position:     i === 0 ? "relative" : "absolute",
+            top:          0,
+            left:         0,
+            width:        "100%",
+            height:       "100%",
+            objectFit:    "contain",
+            mixBlendMode: i === 0 ? "normal" : "multiply",
+            opacity:      0.85,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
 // ── Image display with comparison modes ───────────────────────────────────────
 function ImageDisplay({
   compareMode,
   analysisUrl,
+  activeAssets,
   referenceUrl,
   opacity,
-  levelUrl,
+  imageWidth,
+  imageHeight,
   title,
 }: {
-  compareMode:  CompareMode;
-  analysisUrl:  string;
-  referenceUrl: string;
-  opacity:      number;
-  levelUrl:     string;
-  title:        string;
+  compareMode:   CompareMode;
+  analysisUrl?:  string;
+  activeAssets:  string[];
+  referenceUrl:  string;
+  opacity:       number;
+  imageWidth?:   number;
+  imageHeight?:  number;
+  title:         string;
 }) {
-  if (!analysisUrl) return (
-    <div className="rounded-xl flex items-center justify-center" style={{ minHeight: 300, background: "var(--surface)" }}>
-      <p style={{ color: "var(--text-dim)" }}>No image available</p>
-    </div>
-  );
+  // Determine what to show in the "analysis" slot
+  // If a classic page is selected, show it as a single image; otherwise show the layer stack
+  const hasClassic = Boolean(analysisUrl);
 
   if (compareMode === "reference") {
     return (
@@ -611,7 +681,12 @@ function ImageDisplay({
       <div>
         <p className="text-xs mb-2" style={{ color: "var(--text-dim)" }}>{title} · Reference</p>
         <div className="flex gap-2">
-          <img src={analysisUrl}  alt="Analysis"  className="flex-1 rounded-xl object-contain max-h-[480px]" />
+          <div className="flex-1">
+            {hasClassic
+              ? <img src={analysisUrl} alt="Analysis" className="w-full rounded-xl object-contain max-h-[480px]" />
+              : <LayerStack assets={activeAssets} imageWidth={imageWidth} imageHeight={imageHeight} maxHeight={480} />
+            }
+          </div>
           <img src={referenceUrl} alt="Reference" className="flex-1 rounded-xl object-contain max-h-[480px]" />
         </div>
       </div>
@@ -624,18 +699,33 @@ function ImageDisplay({
         <p className="text-xs mb-2" style={{ color: "var(--text-dim)" }}>{title} · overlay at {Math.round(opacity * 100)}%</p>
         <div className="relative rounded-xl overflow-hidden" style={{ maxHeight: 520 }}>
           <img src={referenceUrl} alt="Reference" className="w-full object-contain" />
-          <img src={analysisUrl} alt="Analysis" className="absolute inset-0 w-full object-contain"
-               style={{ opacity }} />
+          <div className="absolute inset-0 w-full h-full" style={{ opacity }}>
+            {hasClassic
+              ? <img src={analysisUrl} alt="Analysis" className="w-full h-full object-contain" />
+              : <LayerStack assets={activeAssets} imageWidth={imageWidth} imageHeight={imageHeight} maxHeight={520} />
+            }
+          </div>
         </div>
       </div>
     );
   }
 
   // default: "analysis"
+  if (!hasClassic && activeAssets.length === 0) {
+    return (
+      <div className="rounded-xl flex items-center justify-center" style={{ minHeight: 300, background: "var(--surface)" }}>
+        <p style={{ color: "var(--text-dim)" }}>No layers selected — enable at least one above</p>
+      </div>
+    );
+  }
+
   return (
     <div>
       {title && <p className="text-xs mb-2" style={{ color: "var(--text-dim)" }}>{title}</p>}
-      <img src={analysisUrl} alt={title || "Analysis"} className="w-full rounded-xl object-contain max-h-[520px]" />
+      {hasClassic
+        ? <img src={analysisUrl} alt={title || "Analysis"} className="w-full rounded-xl object-contain max-h-[520px]" />
+        : <LayerStack assets={activeAssets} imageWidth={imageWidth} imageHeight={imageHeight} maxHeight={520} />
+      }
     </div>
   );
 }

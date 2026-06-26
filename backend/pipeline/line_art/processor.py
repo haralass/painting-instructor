@@ -15,7 +15,8 @@ def _patch_mediapipe() -> None:
     Must run BEFORE any controlnet_aux import.
     """
     try:
-        import mediapipe as mp, types
+        import types
+        import mediapipe as mp
 
         class _Stub(types.ModuleType):
             def __getattr__(self, name: str):

@@ -62,7 +62,8 @@ def render_detail_levels(
     outline_composites: dict[str, np.ndarray],
     out_dir,
     edges=None,  # list[Edge] | None — for edge_ids per level
-    medium_strategy: MediumStrategy | None = None,   # optional MediumStrategy
+    medium_strategy: MediumStrategy | None = None,
+    edge_maps: dict[str, np.ndarray] | None = None,  # A9: individual edge maps for per-medium processing
 ) -> dict[str, DetailLevel]:
     """
     Render 5 detail levels to disk and return a DetailLevel dict keyed by str level.
@@ -130,10 +131,13 @@ def render_detail_levels(
         if edges is not None:
             edge_ids = [e.id for e in edges if e.type in allowed_types]
 
-        # ── Apply medium strategy to outline composites (level-local copy) ──
-        effective_outlines = outline_composites
-        if medium_strategy is not None:
-            effective_outlines = dict(outline_composites)  # shallow copy — don't mutate original
+        # ── A9: Apply medium strategy to individual edge maps then recomposite ──
+        if edge_maps is not None and medium_strategy is not None:
+            styled = _apply_medium_to_edge_maps(edge_maps, medium_strategy)
+            effective_outlines = _composite_edge_maps(styled)
+        elif medium_strategy is not None:
+            # Fall back: apply strategy to existing composites
+            effective_outlines = dict(outline_composites)
             if medium_strategy.emphasise_primary:
                 prim = effective_outlines.get("outlines_primary")
                 if prim is not None:
@@ -146,6 +150,8 @@ def render_detail_levels(
                 if sec is not None:
                     blended = np.clip(sec.astype(np.int32) + 60, 0, 255).astype(np.uint8)
                     effective_outlines["outlines_primary_secondary"] = blended
+        else:
+            effective_outlines = outline_composites
 
         # ── Outlines PNG ───────────────────────────────────────────────────
         outline_arr = effective_outlines.get(outline_key, np.full((H, W), 255, dtype=np.uint8))
@@ -290,13 +296,24 @@ def _render_colour_lut(
         clipped_lm = lm.clip(0, max_lbl - 1)
         out = np.where((lm < max_lbl)[:, :, None], lut[clipped_lm], out)
 
-    # Apply preserve_whites: force very light regions to near-white
+    # A10: preserve_whites — LUT approach, O(P) per scale instead of O(P×R)
     if medium_strategy is not None and medium_strategy.preserve_whites:
+        by_scale_white: dict[str, set[int]] = defaultdict(set)
         for r in active_regions:
-            if r.mean_lab[0] > 80:   # very light region
-                lm = label_maps.get(r.scale)
-                if lm is not None and r.source_label < int(lm.max()) + 1:
-                    out[lm == r.source_label] = (248, 248, 248)
+            if r.mean_lab[0] > 80:
+                by_scale_white[r.scale].add(r.source_label)
+        for sc, white_lbls in by_scale_white.items():
+            lm = label_maps.get(sc)
+            if lm is None:
+                continue
+            max_lbl = int(lm.max()) + 1
+            white_lut = np.zeros(max_lbl, dtype=bool)
+            for sl in white_lbls:
+                if sl < max_lbl:
+                    white_lut[sl] = True
+            clipped_lm = lm.clip(0, max_lbl - 1)
+            white_px = (lm < max_lbl) & white_lut[clipped_lm]
+            out[white_px] = (248, 248, 248)
 
     return out
 
@@ -368,3 +385,54 @@ def _render_regions(rgb, active_regions, families, label_map, H, W):
         lm = {scale: label_map}
         return _render_regions_lut(rgb, active_regions, families, lm, H, W)
     return _render_regions_lut(rgb, active_regions, families, {}, H, W)
+
+
+def _apply_medium_to_edge_maps(
+    edge_maps: dict[str, np.ndarray],
+    strategy: MediumStrategy,
+) -> dict[str, np.ndarray]:
+    """
+    A9: Apply MediumStrategy to individual edge maps (primary/secondary/decorative/texture)
+    BEFORE compositing. Returns new styled dict without mutating the originals.
+    """
+    styled = {k: arr.copy() for k, arr in edge_maps.items()}
+
+    if strategy.emphasise_primary:
+        prim = styled.get("primary")
+        if prim is not None:
+            kernel = np.ones((2, 2), np.uint8)
+            styled["primary"] = cv2.dilate(prim, kernel)
+
+    if strategy.soften_secondary:
+        sec = styled.get("secondary")
+        if sec is not None:
+            # Reduce secondary map opacity: threshold at higher value → fewer pixels
+            styled["secondary"] = (sec * 0.5).astype(np.uint8)
+
+    if not strategy.include_texture_edges:
+        # Watercolour/charcoal: clear texture map entirely
+        if "texture" in styled:
+            styled["texture"] = np.zeros_like(styled["texture"])
+
+    return styled
+
+
+def _composite_edge_maps(styled: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """
+    Re-composite individual edge maps into the four composite keys expected by render_detail_levels.
+    Returns white-background (255=white, 0=line) composites, same as render_outline_levels.
+    """
+    def _comp(*keys: str) -> np.ndarray:
+        base = np.zeros_like(next(iter(styled.values())))
+        for k in keys:
+            m = styled.get(k)
+            if m is not None:
+                base = np.maximum(base, m)
+        return 255 - base
+
+    return {
+        "outlines_primary":           _comp("primary"),
+        "outlines_primary_secondary": _comp("primary", "secondary"),
+        "outlines_detailed":          _comp("primary", "secondary", "decorative"),
+        "outlines_full":              _comp("primary", "secondary", "decorative", "texture"),
+    }

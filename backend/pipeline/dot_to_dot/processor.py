@@ -57,8 +57,10 @@ def _chain_nearest(pts: np.ndarray, n_dots: int) -> np.ndarray:
 
 def _chain_polylines(polylines: list[np.ndarray]) -> np.ndarray:
     """
-    Vectorised greedy nearest-endpoint chaining via cKDTree on endpoints.
-    Falls back to simple concatenation for single-polyline input.
+    A12: Greedy nearest-endpoint chaining via cKDTree — O(D log D) instead of O(D²).
+
+    Builds a tree on all polyline endpoints, then at each step queries the nearest
+    unvisited endpoint from the current chain tail.
     """
     if not polylines:
         return np.empty((0, 2))
@@ -68,41 +70,46 @@ def _chain_polylines(polylines: list[np.ndarray]) -> np.ndarray:
     if len(remaining) == 1:
         return remaining[0]
 
-    # Build endpoint array: [start_0, end_0, start_1, end_1, ...]
-    endpoints = []
-    for p in remaining:
-        endpoints.append(p[0])
-        endpoints.append(p[-1])
-    ep_arr = np.array(endpoints, dtype=float)   # (2*n, 2)
-
     n = len(remaining)
     visited = np.zeros(n, dtype=bool)
+
+    # Endpoints: ep_arr[2*i] = start of polyline i, ep_arr[2*i+1] = end of polyline i
+    ep_arr = np.empty((n * 2, 2), dtype=float)
+    for i, p in enumerate(remaining):
+        ep_arr[2 * i]     = p[0]
+        ep_arr[2 * i + 1] = p[-1]
+
+    tree = cKDTree(ep_arr)
+
     chain = [remaining[0]]
     visited[0] = True
 
     while not visited.all():
         tail = chain[-1][-1]
-        best_dist = np.inf
-        best_i = -1
-        best_flip = False
-        for i in range(n):
-            if visited[i]:
+        k = min(2 * n, 64)
+        dists, idxs = tree.query(tail, k=k)
+        if np.ndim(idxs) == 0:
+            idxs = [int(idxs)]
+
+        found = False
+        for ep_idx in idxs:
+            poly_idx = int(ep_idx) // 2
+            if visited[poly_idx]:
                 continue
-            ds = np.sum((remaining[i][0] - tail) ** 2)
-            de = np.sum((remaining[i][-1] - tail) ** 2)
-            if ds < best_dist:
-                best_dist = ds
-                best_i = i
-                best_flip = False
-            if de < best_dist:
-                best_dist = de
-                best_i = i
-                best_flip = True
-        if best_i == -1:
+            is_end = (int(ep_idx) % 2 == 1)   # True if nearest was the end point
+            seg = remaining[poly_idx][::-1] if is_end else remaining[poly_idx]
+            chain.append(seg)
+            visited[poly_idx] = True
+            found = True
             break
-        seg = remaining[best_i][::-1] if best_flip else remaining[best_i]
-        chain.append(seg)
-        visited[best_i] = True
+
+        if not found:
+            # All k nearest are visited — fall back to first unvisited
+            for i in range(n):
+                if not visited[i]:
+                    chain.append(remaining[i])
+                    visited[i] = True
+                    break
 
     return np.concatenate(chain, axis=0)
 

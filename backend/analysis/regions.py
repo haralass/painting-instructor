@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 from skimage import segmentation
 from skimage import color as skcolor
-from scipy.ndimage import center_of_mass, mean as ndimage_mean, labeled_comprehension
+from scipy.ndimage import center_of_mass, mean as ndimage_mean, labeled_comprehension, find_objects as ndimage_find_objects
 
 from .models import Region
 from .preprocessing import ImageCache
@@ -49,10 +49,14 @@ def build_region_hierarchy(
     seed: int = 42,
     zone_map: np.ndarray | None = None,
     zones: list | None = None,
+    region_complexity: int = 3,
 ) -> tuple[dict[str, np.ndarray], list[Region]]:
     """
     Build a 5-level hierarchy using a single SLIC base segmentation +
     agglomerative merge tree.
+
+    region_complexity (1–5): controls how many superpixels are used as the
+    base segmentation and how fine the l5 cut is. 3 = balanced default.
 
     Pass pre-computed zone_map/zones to avoid recomputing them inside
     (pipeline.py already computes them; passing avoids a redundant O(P) pass).
@@ -68,13 +72,15 @@ def build_region_hierarchy(
     return _build_merge_tree_hierarchy(
         cache, palette_size, detail_level, n_value_zones, value_colour_families, seed,
         zone_map=zone_map, zones=zones,
+        region_complexity=region_complexity,
     )
 
 
-def _compute_region_targets(cache: ImageCache, n_base: int) -> list[int]:
+def _compute_region_targets(cache: ImageCache, n_base: int, region_complexity: int = 3) -> list[int]:
     """
-    Adaptive region targets based on image complexity, independent of palette size.
-    Uses gradient density as a proxy for structural complexity.
+    Adaptive region targets (l1..l5 cut sizes) based on image complexity and region_complexity.
+
+    region_complexity 1–5 scales the hierarchy targets independently of palette_size.
     """
     max_grad = float(cache.grad.max()) + 1e-6
     grad_density = float((cache.grad / max_grad).mean())   # 0–1
@@ -86,6 +92,12 @@ def _compute_region_targets(cache: ImageCache, n_base: int) -> list[int]:
         max(s, min(c, int(s + (c - s) * grad_density)))
         for s, c in zip(simple, complex_)
     ]
+
+    # Scale by region_complexity (1=coarsest, 5=finest)
+    _COMPLEXITY_SCALE = {1: 0.50, 2: 0.70, 3: 1.00, 4: 1.30, 5: 1.60}
+    c_scale = _COMPLEXITY_SCALE.get(region_complexity, 1.0)
+    targets = [max(2, int(t * c_scale)) for t in targets]
+
     # Never exceed n_base/3 for the finest level
     targets[4] = min(targets[4], max(targets[3] + 2, n_base // 3))
     # Ensure strictly increasing
@@ -103,6 +115,7 @@ def _build_merge_tree_hierarchy(
     seed: int,
     zone_map: np.ndarray | None = None,
     zones: list | None = None,
+    region_complexity: int = 3,
 ) -> tuple[dict[str, np.ndarray], list[Region]]:
     H, W = cache.H, cache.W
     smooth_rgb = cache.smooth
@@ -112,7 +125,13 @@ def _build_merge_tree_hierarchy(
     grad = cache.grad
 
     # ── Base SLIC segmentation ────────────────────────────────────────────────
-    n_base = max(200, min(1500, int((W * H) ** 0.5 // 4)))
+    # A7: n_base adapts to image area, edge density, and region_complexity (A6)
+    n_base_base = max(200, min(1500, int((W * H) ** 0.5 // 4)))
+    edge_density = float((grad > grad.mean()).mean())    # fraction of above-mean-gradient pixels
+    density_mult = 1.0 + 0.3 * edge_density             # 1.0–1.3 based on image texture
+    _COMPLEXITY_MULT = {1: 0.55, 2: 0.75, 3: 1.00, 4: 1.35, 5: 1.70}
+    complexity_mult = _COMPLEXITY_MULT.get(region_complexity, 1.0)
+    n_base = max(150, min(2500, int(n_base_base * density_mult * complexity_mult)))
     base_labels = segmentation.slic(
         smooth_rgb,
         n_segments=n_base,
@@ -144,8 +163,13 @@ def _build_merge_tree_hierarchy(
     sp_b = ndimage_mean(lab_img[:, :, 2], base_labels, range(n_actual))
     sp_lab = np.column_stack([sp_L, sp_a, sp_b])  # (n_actual, 3)
 
+    # A8: per-superpixel mean gradient — approximates boundary gradient strength
+    sp_grad_arr = np.array(ndimage_mean(grad, base_labels, range(n_actual)), dtype=np.float64)
+    max_grad_val = float(grad.max()) + 1e-6
+
     # ── Build RAG (Region Adjacency Graph) ────────────────────────────────────
-    # Edge weight = LAB colour diff + 0.1 * normalised spatial distance
+    # A8: Edge weight = LAB colour diff + spatial distance + boundary gradient
+    # High gradient between two superpixels → high merge cost → boundary protected.
     adj: dict[tuple[int, int], float] = {}
     diag_dist = float(np.sqrt(H * H + W * W))
 
@@ -167,7 +191,9 @@ def _build_merge_tree_hierarchy(
             cy_i, cx_i = sp_centroids[i]
             cy_j, cx_j = sp_centroids[j]
             sp_dist = float(np.sqrt((cy_i - cy_j) ** 2 + (cx_i - cx_j) ** 2)) / diag_dist
-            adj[(i, j)] = lab_diff + 0.1 * sp_dist
+            # Boundary gradient: average of the two superpixels' mean gradients
+            boundary_grad = float(sp_grad_arr[i] + sp_grad_arr[j]) / (2 * max_grad_val)
+            adj[(i, j)] = lab_diff + 0.1 * sp_dist + 0.4 * boundary_grad
 
     # ── Priority-queue agglomerative merge ────────────────────────────────────
     heap: list[tuple[float, int, int]] = [
@@ -253,7 +279,7 @@ def _build_merge_tree_hierarchy(
         root_adj.pop(rb, None)
 
     # ── Define 5 cut points ───────────────────────────────────────────────────
-    cut_sizes = _compute_region_targets(cache, n_actual)
+    cut_sizes = _compute_region_targets(cache, n_actual, region_complexity=region_complexity)
 
     # ── Produce label maps from merge sequence ────────────────────────────────
     level_label_maps = _cuts_to_label_maps(base_labels, merges, cut_sizes, n_actual, H, W)
@@ -338,6 +364,10 @@ def _extract_level_regions(
     texture_arr = np.sqrt(np.maximum(0.0, np.array(L_sq_means) - np.array(L_means) ** 2)) / 50.0
     texture_arr = np.clip(texture_arr, 0, 1)
 
+    # A5: Real bboxes — find_objects on label_map+1 (label 0 is ignored by find_objects)
+    # bbox_slices[lbl] = (row_slice, col_slice) for original label lbl
+    bbox_slices = ndimage_find_objects(label_map + 1)
+
     # --- Build Region objects ---
     centres_lab = value_colour_families.get("centres_lab")
     id_to_rank  = value_colour_families.get("cluster_id_to_rank", {})
@@ -366,6 +396,14 @@ def _extract_level_regions(
         cy_v = float(cy_arr[i])
         cx_v = float(cx_arr[i])
 
+        # A5: real bounding box from find_objects (row_slice → y, col_slice → x)
+        sl = bbox_slices[int(lbl)] if int(lbl) < len(bbox_slices) else None
+        if sl is not None:
+            row_sl, col_sl = sl
+            bbox: tuple[int, int, int, int] = (col_sl.start, row_sl.start, col_sl.stop, row_sl.stop)
+        else:
+            bbox = (0, 0, W, H)
+
         # Parent: look up same centroid pixel in coarser level
         parent_id: int | None = None
         if level > 0:
@@ -386,7 +424,7 @@ def _extract_level_regions(
             level=level,
             area=area,
             centroid=(cx_v, cy_v),
-            bbox=(0, 0, W, H),   # TODO: bounding box if needed
+            bbox=bbox,
             mean_lab=(float(L_means[i]), float(a_means[i]), float(b_means[i])),
             mean_rgb=mean_rgb,
             value_zone=int(vz_arr[i]),
@@ -412,9 +450,6 @@ def _cuts_to_label_maps(
 
     Returns dict "l1".."l5" → (H,W) int32 array.
     """
-    # Track current root for each base label
-    current_root = list(range(n_base))  # base_label → current root node
-
     # Map from node → representative base-label index (for label map output)
     # We use the root node ID as the output label value.
 
@@ -453,7 +488,6 @@ def _cuts_to_label_maps(
     # Apply merges and snapshot at each cut point
     snapshots: dict[int, np.ndarray] = {}  # cut_size → label_map
 
-    merge_idx = 0
     n_remaining = n_base
     # We'll apply merges and take snapshots at each cut
     # Process in order of merge (finest-to-coarsest = many-regions to few-regions)

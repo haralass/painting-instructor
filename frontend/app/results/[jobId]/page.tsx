@@ -79,6 +79,14 @@ const LAYER_LABELS: Record<string, string> = {
   regions:  "Regions",
 };
 
+// A4: Individual outline sublayer labels
+const OUTLINE_SUBLAYER_LABELS: Record<string, string> = {
+  primary:    "Primary",
+  secondary:  "Secondary",
+  decorative: "Decorative",
+  texture:    "Texture",
+};
+
 const CLASSIC_PAGE_KEYS = [
   "line_art", "notan", "color_temperature", "color_palette",
   "light_direction", "color_by_number", "dot_to_dot",
@@ -92,6 +100,7 @@ type JobStatus = {
   progress: number;
   step: string;
   message: string;
+  analysis_ready?: boolean;  // A3: true when preliminary manifest is available
   result?: {
     manifest: string;
     pages: string[];
@@ -108,6 +117,7 @@ type Manifest = {
     palette_size: number;
     detail_level: number;
     value_zones: number;
+    region_complexity?: number;
     background_detail?: boolean;
     texture_detail?: boolean;
   };
@@ -118,6 +128,7 @@ type Manifest = {
     level: number; label: string;
     outlines: string; regions: string; values: string; colours: string;
   }>;
+  edge_maps?: Record<string, string>;  // A4: "primary"|"secondary"|"decorative"|"texture" → rel path
   palette: { id: number; name: string; base_rgb: [number,number,number]; area_fraction: number }[];
   colour_families: unknown[];
   value_zones: { id: number; label: string; grey_value: number }[];
@@ -130,6 +141,7 @@ type Manifest = {
   teaching_instructions?: Record<string, string>;
   video?: string;
   pdf?: string;
+  status?: string;  // A3: "analysis_ready" when progressive delivery is active
 };
 
 type AnalysisPage = {
@@ -147,6 +159,13 @@ function absUrl(relPath: string | undefined | null): string {
   return `${API}/${relPath.replace(/^\//, "")}`;
 }
 
+/** Convert an outputs-relative path (e.g. "abc/level_1.png") to a full URL. */
+function outputUrl(relPath: string | undefined | null): string {
+  if (!relPath) return "";
+  if (relPath.startsWith("http")) return relPath;
+  return `${API}/outputs/${relPath.replace(/^\//, "")}`;
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export default function ResultsPage() {
   const { jobId } = useParams<{ jobId: string }>();
@@ -155,6 +174,9 @@ export default function ResultsPage() {
   const [classicPages, setClassicPages] = useState<AnalysisPage[]>([]);
   const [selected,     setSelected]     = useState<AnalysisPage | null>(null);
   const [whyOpen,      setWhyOpen]      = useState(false);
+
+  // A2: Explicit view mode — classic_analysis vs hierarchical_lesson
+  const [viewMode, setViewMode] = useState<"classic_analysis" | "hierarchical_lesson">("hierarchical_lesson");
 
   // Hierarchical controls
   const [detailLevel,  setDetailLevel]  = useState(3);
@@ -172,6 +194,17 @@ export default function ResultsPage() {
     setLayers(prev => ({ ...prev, [key]: !prev[key] }));
   }
 
+  // A4: Individual outline sublayer toggles (only visible when edge_maps available)
+  const [outlineSublayers, setOutlineSublayers] = useState<Record<string, boolean>>({
+    primary:    true,
+    secondary:  false,
+    decorative: false,
+    texture:    false,
+  });
+  function toggleSublayer(key: string) {
+    setOutlineSublayers(prev => ({ ...prev, [key]: !prev[key] }));
+  }
+
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchManifest = useCallback(async (manifestUrl: string) => {
@@ -184,7 +217,7 @@ export default function ResultsPage() {
         const ps: AnalysisPage[] = (data.pages ?? []).map(p => {
           const key  = p.split("/").pop()?.replace(".png", "") ?? "";
           const meta = PAGE_LABELS[key] ?? { title: key, why: "", tip: "" };
-          return { key, url: absUrl(p), ...meta };
+          return { key, url: outputUrl(p), ...meta };
         }).filter(p => CLASSIC_PAGE_KEYS.includes(p.key));
         setClassicPages(ps);
         if (ps.length > 0 && !selected) setSelected(ps[0]);
@@ -204,9 +237,12 @@ export default function ResultsPage() {
       if ((data.status === "completed" || data.status === "completed_with_warnings") && data.result?.manifest) {
         if (pollRef.current) clearInterval(pollRef.current);
         await fetchManifest(data.result.manifest);
+      } else if (data.analysis_ready && !manifest) {
+        // A3: Progressive delivery — fetch manifest while video/PDF still rendering
+        await fetchManifest(`/outputs/${jobId}/manifest.json`);
       }
     } catch { /* backend unreachable */ }
-  }, [jobId, fetchManifest]);
+  }, [jobId, fetchManifest, manifest]);
 
   useEffect(() => {
     poll();
@@ -223,7 +259,12 @@ export default function ResultsPage() {
   }, [poll]);
 
   // ── Loading / Error states ─────────────────────────────────────────────────
-  if (jobStatus.status !== "completed" && jobStatus.status !== "completed_with_warnings") {
+  // A3: show results layout if analysis_ready even while video/PDF still processing
+  const showResults = jobStatus.status === "completed"
+    || jobStatus.status === "completed_with_warnings"
+    || (jobStatus.analysis_ready && manifest !== null);
+
+  if (!showResults) {
     const isRunning = jobStatus.status === "queued" || jobStatus.status === "processing";
     return (
       <main className="min-h-screen flex flex-col items-center justify-center px-4"
@@ -267,12 +308,22 @@ export default function ResultsPage() {
 
   // Reference image URL: use manifest.reference if available, fall back to line_art
   const referenceUrl = manifest?.reference
-    ? `${API}/outputs/${manifest.reference}`
+    ? outputUrl(manifest.reference)
     : absUrl(`/outputs/${jobId}/line_art.png`);
 
   const currentLevelData = manifest?.detail_levels?.[String(detailLevel)];
 
-  // Compute the ordered list of asset URLs for all active layers at the current level
+  // Whether video/PDF are still being generated (A3 progressive delivery)
+  const isAnalysisReady = manifest?.status === "analysis_ready";
+  const videoReady = Boolean(manifest?.video);
+  const pdfReady   = Boolean(manifest?.pdf);
+
+  // A2: derive analysisUrl and activeAssets from viewMode
+  const analysisUrl = (viewMode === "classic_analysis" && selected)
+    ? selected.url
+    : undefined;
+
+  // Compute the ordered list of asset URLs for hierarchical layers
   const LAYER_ASSET_KEY: Record<string, keyof NonNullable<typeof currentLevelData>> = {
     outlines: "outlines",
     values:   "values",
@@ -280,13 +331,30 @@ export default function ResultsPage() {
     regions:  "regions",
   };
 
-  const activeAssets: string[] = Object.entries(layers)
-    .filter(([, vis]) => vis)
-    .map(([key]) => {
-      const assetPath = currentLevelData?.[LAYER_ASSET_KEY[key]];
-      return assetPath ? `${API}/outputs/${assetPath}` : null;
-    })
-    .filter((u): u is string => Boolean(u));
+  // A4: sublayer edge map URLs (global, not per-level)
+  const hasEdgeMaps = Boolean(manifest?.edge_maps && Object.keys(manifest.edge_maps).length > 0);
+  const activeSublayerUrls: string[] = hasEdgeMaps
+    ? Object.entries(outlineSublayers)
+        .filter(([, vis]) => vis)
+        .map(([key]) => {
+          const p = manifest?.edge_maps?.[key];
+          return p ? outputUrl(p) : null;
+        })
+        .filter((u): u is string => Boolean(u))
+    : [];
+
+  const activeAssets: string[] = viewMode === "classic_analysis"
+    ? []
+    : [
+        ...Object.entries(layers)
+          .filter(([key, vis]) => vis && !(key === "outlines" && hasEdgeMaps))
+          .map(([key]) => {
+            const assetPath = currentLevelData?.[LAYER_ASSET_KEY[key]];
+            return typeof assetPath === "string" ? outputUrl(assetPath) : null;
+          })
+          .filter((u): u is string => Boolean(u)),
+        ...activeSublayerUrls,
+      ];
 
   return (
     <main className="min-h-screen flex flex-col" style={{ background: "var(--bg)" }}>
@@ -295,22 +363,45 @@ export default function ResultsPage() {
       <header className="flex items-center justify-between px-6 py-4 border-b flex-shrink-0"
               style={{ borderColor: "var(--border)" }}>
         <a href="/" className="font-bold text-lg" style={{ color: "var(--accent)" }}>← New Tutorial</a>
+
+        {/* A3: Progressive delivery banner */}
+        {isAnalysisReady && (
+          <span className="text-xs px-3 py-1 rounded-full border"
+                style={{ borderColor: "var(--accent)", color: "var(--accent)", background: "transparent" }}>
+            Analysis ready — video &amp; PDF still rendering…
+          </span>
+        )}
+
         <div className="flex gap-2 text-sm">
           {manifest?.input && (
             <span className="px-3 py-1 rounded" style={{ background: "var(--surface)", color: "var(--text-dim)" }}>
               {manifest.input.medium} · {manifest.input.palette_size} colours · {manifest.input.value_zones} zones
             </span>
           )}
-          <a href={pdfUrl} target="_blank" rel="noreferrer"
-             className="px-4 py-2 rounded-lg border transition-colors"
-             style={{ borderColor: "var(--border)", color: "var(--text-dim)" }}>
-            Download PDF
-          </a>
-          <a href={videoUrl} download
-             className="px-4 py-2 rounded-lg font-semibold"
-             style={{ background: "var(--accent)", color: "#0f0e0d" }}>
-            Download Video
-          </a>
+          {pdfReady ? (
+            <a href={absUrl(manifest!.pdf!)} target="_blank" rel="noreferrer"
+               className="px-4 py-2 rounded-lg border transition-colors"
+               style={{ borderColor: "var(--border)", color: "var(--text-dim)" }}>
+              Download PDF
+            </a>
+          ) : (
+            <span className="px-4 py-2 rounded-lg border"
+                  style={{ borderColor: "var(--border)", color: "var(--text-dim)", opacity: 0.4 }}>
+              PDF rendering…
+            </span>
+          )}
+          {videoReady ? (
+            <a href={absUrl(manifest!.video!)} download
+               className="px-4 py-2 rounded-lg font-semibold"
+               style={{ background: "var(--accent)", color: "#0f0e0d" }}>
+              Download Video
+            </a>
+          ) : (
+            <span className="px-4 py-2 rounded-lg font-semibold"
+                  style={{ background: "var(--surface)", color: "var(--text-dim)", opacity: 0.4 }}>
+              Video rendering…
+            </span>
+          )}
         </div>
       </header>
 
@@ -319,17 +410,44 @@ export default function ResultsPage() {
         {/* ── Left: classic analysis thumbnails ───────────────────────────── */}
         <nav className="w-44 flex-shrink-0 overflow-y-auto border-r p-2 space-y-1 hidden md:block"
              style={{ borderColor: "var(--border)" }}>
-          <p className="text-xs font-semibold uppercase tracking-widest px-1 mb-2"
-             style={{ color: "var(--text-dim)" }}>Analysis</p>
-          {classicPages.map(p => (
-            <button key={p.key}
-                    onClick={() => { setSelected(p); setCompareMode("analysis"); setWhyOpen(false); }}
-                    className="w-full text-left rounded-lg overflow-hidden border transition-colors"
-                    style={{ borderColor: selected?.key === p.key && compareMode === "analysis" ? "var(--accent)" : "transparent" }}>
-              <img src={p.url} alt={p.title} className="w-full object-cover" style={{ aspectRatio: "4/3" }} />
-              <p className="text-xs px-2 py-1 truncate" style={{ color: "var(--text-dim)" }}>{p.title}</p>
+
+          {/* A2: View mode switcher */}
+          <div className="flex flex-col gap-1 mb-3">
+            <button
+              onClick={() => setViewMode("hierarchical_lesson")}
+              className="w-full text-left px-2 py-1.5 rounded text-xs font-medium transition-colors"
+              style={{
+                background: viewMode === "hierarchical_lesson" ? "var(--accent)" : "var(--surface)",
+                color:      viewMode === "hierarchical_lesson" ? "#0f0e0d" : "var(--text-dim)",
+              }}>
+              Hierarchical Lesson
             </button>
-          ))}
+            <button
+              onClick={() => { setViewMode("classic_analysis"); if (!selected && classicPages[0]) setSelected(classicPages[0]); }}
+              className="w-full text-left px-2 py-1.5 rounded text-xs font-medium transition-colors"
+              style={{
+                background: viewMode === "classic_analysis" ? "var(--accent)" : "var(--surface)",
+                color:      viewMode === "classic_analysis" ? "#0f0e0d" : "var(--text-dim)",
+              }}>
+              Classic Analysis
+            </button>
+          </div>
+
+          {viewMode === "classic_analysis" && (
+            <>
+              <p className="text-xs font-semibold uppercase tracking-widest px-1 mb-2"
+                 style={{ color: "var(--text-dim)" }}>Analysis</p>
+              {classicPages.map(p => (
+                <button key={p.key}
+                        onClick={() => { setSelected(p); setCompareMode("analysis"); setWhyOpen(false); }}
+                        className="w-full text-left rounded-lg overflow-hidden border transition-colors"
+                        style={{ borderColor: selected?.key === p.key ? "var(--accent)" : "transparent" }}>
+                  <img src={p.url} alt={p.title} className="w-full object-cover" style={{ aspectRatio: "4/3" }} />
+                  <p className="text-xs px-2 py-1 truncate" style={{ color: "var(--text-dim)" }}>{p.title}</p>
+                </button>
+              ))}
+            </>
+          )}
 
           {/* Hierarchical palette preview */}
           {manifest?.palette && manifest.palette.length > 0 && (
@@ -353,12 +471,21 @@ export default function ResultsPage() {
         {/* ── Centre: video + main image + controls ───────────────────────── */}
         <section className="flex-1 flex flex-col overflow-y-auto min-w-0">
 
-          {/* Video */}
+          {/* Video — A3: show pending state during progressive delivery */}
           <div className="p-4 border-b flex-shrink-0" style={{ borderColor: "var(--border)" }}>
             <p className="text-xs font-semibold uppercase tracking-widest mb-2"
                style={{ color: "var(--text-dim)" }}>Tutorial Video</p>
-            <video src={videoUrl} controls className="w-full rounded-xl"
-                   style={{ background: "#000", maxHeight: 380 }} />
+            {videoReady ? (
+              <video src={absUrl(manifest!.video!)} controls className="w-full rounded-xl"
+                     style={{ background: "#000", maxHeight: 380 }} />
+            ) : (
+              <div className="w-full rounded-xl flex items-center justify-center"
+                   style={{ background: "var(--surface)", height: 180 }}>
+                <p className="text-sm" style={{ color: "var(--text-dim)" }}>
+                  Video is still rendering…
+                </p>
+              </div>
+            )}
           </div>
 
           {/* ── Hierarchical detail slider ──────────────────────────────── */}
@@ -372,7 +499,7 @@ export default function ResultsPage() {
                 </span>
               </div>
               <input type="range" min={1} max={5} step={1} value={detailLevel}
-                     onChange={e => setDetailLevel(Number(e.target.value))}
+                     onChange={e => { setDetailLevel(Number(e.target.value)); setViewMode("hierarchical_lesson"); }}
                      className="w-full accent-yellow-600" />
               <div className="flex justify-between text-xs mt-1" style={{ color: "var(--text-dim)" }}>
                 <span>Foundation</span><span>Full Reference</span>
@@ -383,7 +510,7 @@ export default function ResultsPage() {
                 {Object.entries(layers).map(([key, vis]) => (
                   <button
                     key={key}
-                    onClick={() => toggleLayer(key)}
+                    onClick={() => { toggleLayer(key); setViewMode("hierarchical_lesson"); }}
                     style={{
                       background:   vis ? "var(--accent)" : "var(--surface)",
                       color:        vis ? "#0f0e0d"       : "var(--text)",
@@ -399,6 +526,32 @@ export default function ResultsPage() {
                   </button>
                 ))}
               </div>
+
+              {/* A4: Individual outline sublayer toggles — only when edge_maps available */}
+              {hasEdgeMaps && layers.outlines && (
+                <div className="mt-2">
+                  <p className="text-xs mb-1" style={{ color: "var(--text-dim)" }}>Outline sublayers:</p>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {Object.entries(outlineSublayers).map(([key, vis]) => (
+                      <button
+                        key={key}
+                        onClick={() => toggleSublayer(key)}
+                        style={{
+                          background:   vis ? "var(--accent)" : "var(--surface)",
+                          color:        vis ? "#0f0e0d"       : "var(--text-dim)",
+                          border:       `1px solid ${vis ? "var(--accent)" : "var(--border)"}`,
+                          padding:      "4px 10px",
+                          borderRadius: 6,
+                          fontSize:     12,
+                          cursor:       "pointer",
+                        }}
+                      >
+                        {OUTLINE_SUBLAYER_LABELS[key] ?? key}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Background/texture analysis indicators */}
               <div className="flex gap-3 mt-1">
@@ -451,17 +604,17 @@ export default function ResultsPage() {
           <div className="p-4 flex-1">
             <ImageDisplay
               compareMode={compareMode}
-              analysisUrl={selected ? selected.url : undefined}
-              activeAssets={selected ? [] : activeAssets}
+              analysisUrl={analysisUrl}
+              activeAssets={viewMode === "classic_analysis" ? [] : activeAssets}
               referenceUrl={referenceUrl}
               opacity={opacity}
               imageWidth={manifest?.image?.width}
               imageHeight={manifest?.image?.height}
-              title={selected ? selected.title : (currentLevelData?.label ?? "")}
+              title={viewMode === "classic_analysis" && selected ? selected.title : (currentLevelData?.label ?? "")}
             />
 
-            {/* Classic page WHY explanation */}
-            {selected && compareMode === "analysis" && (
+            {/* A2: Classic page WHY explanation — only in classic_analysis mode */}
+            {viewMode === "classic_analysis" && selected && compareMode === "analysis" && (
               <div className="mt-3 flex items-center gap-2">
                 <button onClick={() => setWhyOpen(!whyOpen)}
                         className="px-3 py-1 rounded-lg border text-sm transition-colors"
@@ -480,17 +633,19 @@ export default function ResultsPage() {
               </div>
             )}
 
-            {/* Mobile thumbnail strip */}
-            <div className="flex gap-2 mt-4 overflow-x-auto pb-2 md:hidden">
-              {classicPages.map(p => (
-                <button key={p.key}
-                        onClick={() => { setSelected(p); setCompareMode("analysis"); }}
-                        className="flex-shrink-0 rounded overflow-hidden border"
-                        style={{ borderColor: selected?.key === p.key ? "var(--accent)" : "var(--border)" }}>
-                  <img src={p.url} alt={p.title} className="h-16 w-20 object-cover" />
-                </button>
-              ))}
-            </div>
+            {/* Mobile thumbnail strip — only in classic mode */}
+            {viewMode === "classic_analysis" && (
+              <div className="flex gap-2 mt-4 overflow-x-auto pb-2 md:hidden">
+                {classicPages.map(p => (
+                  <button key={p.key}
+                          onClick={() => { setSelected(p); setCompareMode("analysis"); }}
+                          className="flex-shrink-0 rounded overflow-hidden border"
+                          style={{ borderColor: selected?.key === p.key ? "var(--accent)" : "var(--border)" }}>
+                    <img src={p.url} alt={p.title} className="h-16 w-20 object-cover" />
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </section>
 

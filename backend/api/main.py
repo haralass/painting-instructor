@@ -70,8 +70,9 @@ async def create_job(
     n_colors:      int = Form(0),
     detail_level:  int = Form(3),
     value_zones:   int = Form(5),
-    texture_detail:    bool = Form(True),
-    background_detail: bool = Form(False),
+    texture_detail:     bool = Form(True),
+    background_detail:  bool = Form(False),
+    region_complexity:  int  = Form(3),   # A6: 1–5 hierarchy resolution
 ):
     """Upload a reference photo and start the painting instructor pipeline."""
     if file.content_type not in ALLOWED_TYPES:
@@ -79,6 +80,9 @@ async def create_job(
 
     # Resolve palette_size: canonical wins; fall back to n_colors; default 12
     resolved_palette = palette_size or n_colors or 12
+
+    if not (1 <= region_complexity <= 5):
+        raise HTTPException(422, f"region_complexity must be 1–5, got {region_complexity}")
 
     try:
         medium        = validate_medium(medium)
@@ -96,12 +100,13 @@ async def create_job(
     run_pipeline.apply_async(
         args=[str(img_path), job_id],
         kwargs={
-            "medium":             medium,
-            "palette_size":       resolved_palette,
-            "detail_level":       detail_level,
-            "value_zones":        value_zones,
-            "texture_detail":     texture_detail,
-            "background_detail":  background_detail,
+            "medium":              medium,
+            "palette_size":        resolved_palette,
+            "detail_level":        detail_level,
+            "value_zones":         value_zones,
+            "texture_detail":      texture_detail,
+            "background_detail":   background_detail,
+            "region_complexity":   region_complexity,
         },
         task_id=job_id,
     )
@@ -116,8 +121,7 @@ def get_job(job_id: str) -> JobResponse:
     from celery.result import AsyncResult
 
     r = AsyncResult(job_id, app=celery_app)
-    state  = r.state
-    status = _CELERY_TO_STATUS.get(state, "processing")
+    state = r.state
 
     if state in ("PENDING", "RECEIVED"):
         return JobResponse(job_id=job_id, status="queued", progress=0, step="queued", message="Waiting to start")

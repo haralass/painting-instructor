@@ -127,32 +127,19 @@ def process(
     # 3. face parsing — freeze cross-zone edges
     zone_map = _face_zone_edges(smooth_rgb) if use_face_parsing else None
 
-    # Precompute per-label LAB statistics ONCE — eliminates O(P×E) full-image
-    # mask comparisons inside the edge loop below.
-    bgr = smooth_bgr
-    lab_img = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
-    unique_labels = np.unique(labels_slic)
-    L_means = ndimage_mean(lab_img[:, :, 0].astype(float), labels_slic, unique_labels)
-    a_means = ndimage_mean(lab_img[:, :, 1].astype(float), labels_slic, unique_labels)
-    b_means = ndimage_mean(lab_img[:, :, 2].astype(float), labels_slic, unique_labels)
-    area_lut = np.bincount(labels_slic.ravel(), minlength=int(unique_labels.max()) + 1)
-
-    lab_per_label = {
-        int(lbl): np.array([L_means[i], a_means[i], b_means[i]])
-        for i, lbl in enumerate(unique_labels)
-    }
-    area_per_label = {int(lbl): int(area_lut[lbl]) for lbl in unique_labels}
-
     # 4. RAG merge with binary search toward n_colors
     # Build the graph ONCE and apply face-zone penalties ONCE, then copy per iteration.
     g_base = sk_graph.rag_mean_color(smooth_rgb, labels_slic)
     if zone_map is not None:
+        # A11: vectorised zone-per-label via combined bincount — O(P) instead of O(P×E)
+        max_slic_lbl = int(labels_slic.max()) + 1
+        n_face_zones = int(zone_map.max()) + 1
+        combined = labels_slic.ravel().astype(np.int64) * n_face_zones + zone_map.ravel().astype(np.int64)
+        counts_2d = np.bincount(combined, minlength=max_slic_lbl * n_face_zones).reshape(max_slic_lbl, n_face_zones)
+        zone_lut = counts_2d.argmax(axis=1)  # shape (max_slic_lbl,): slic_label → dominant face zone
         for n1, n2 in list(g_base.edges()):
-            # Use lookup tables instead of full-image mask comparisons
-            mask1 = labels_slic == n1
-            mask2 = labels_slic == n2
-            z1 = int(np.bincount(zone_map[mask1].ravel()).argmax())
-            z2 = int(np.bincount(zone_map[mask2].ravel()).argmax())
+            z1 = int(zone_lut[n1]) if n1 < max_slic_lbl else 0
+            z2 = int(zone_lut[n2]) if n2 < max_slic_lbl else 0
             if z1 != z2 and z1 != 0 and z2 != 0:
                 g_base[n1][n2]['weight'] = 1e6
 
@@ -170,9 +157,14 @@ def process(
             best_labels = merged
 
     # 5. LAB K-means on region mean colors → palette
+    # A11: vectorised via ndimage_mean — O(P) instead of O(P×R) comprehension
     img_lab = skcolor.rgb2lab(smooth_rgb.astype(np.float32) / 255.0)
-    regions = np.unique(best_labels); regions = regions[regions > 0]
-    mean_lab = np.array([img_lab[best_labels == r].mean(0) for r in regions])
+    regions = np.unique(best_labels)
+    regions = regions[regions > 0]
+    _L_m = ndimage_mean(img_lab[:, :, 0], best_labels, regions)
+    _a_m = ndimage_mean(img_lab[:, :, 1], best_labels, regions)
+    _b_m = ndimage_mean(img_lab[:, :, 2], best_labels, regions)
+    mean_lab = np.column_stack([_L_m, _a_m, _b_m])
     km = MiniBatchKMeans(
         n_clusters=min(n_colors, len(regions)),
         init='k-means++', n_init=10, random_state=42
@@ -193,7 +185,8 @@ def process(
     props = measure.regionprops(color_map_1indexed)
     small = {p.label for p in props if p.area < min_region_px}
     if small:
-        tmp = color_map_1indexed.copy(); tmp[np.isin(tmp, list(small))] = 0
+        tmp = color_map_1indexed.copy()
+        tmp[np.isin(tmp, list(small))] = 0
         color_map_1indexed = segmentation.expand_labels(tmp, distance=60)
     # Restore 0-based colour index
     colour_map = (color_map_1indexed - 1).astype(np.int32)

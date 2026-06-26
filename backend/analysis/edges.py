@@ -1,10 +1,14 @@
 from __future__ import annotations
+import logging
+import time
 import cv2
 import numpy as np
 from scipy.ndimage import mean as ndimage_mean
 
 from .models import Edge
 from .preprocessing import ImageCache
+
+log = logging.getLogger(__name__)
 
 # Minimum contour arc-length to count as an edge
 _MIN_ARC = 8
@@ -29,7 +33,12 @@ def extract_edge_hierarchy(
     fg_mask: np.ndarray | None = None,
     include_texture: bool = True,
     include_background: bool = True,
-    label_to_region_id: dict[int, int] | None = None,   # NEW param
+    label_to_region_id: dict[int, int] | None = None,
+    # A13: pathological-input budgets
+    max_edges: int = 20_000,
+    max_contours: int = 50_000,
+    max_time_secs: float = 25.0,
+    max_svg_points: int = 500_000,
 ) -> tuple[list[Edge], dict[str, np.ndarray]]:
     """
     Classify detected edges into four semantic levels:
@@ -96,10 +105,30 @@ def extract_edge_hierarchy(
     maps_decorative= np.zeros((H, W), dtype=np.uint8)
     maps_texture   = np.zeros((H, W), dtype=np.uint8)
 
+    # A13: cap contour count before the loop — drop lowest-arc contours first
+    if len(contours) > max_contours:
+        arcs = [cv2.arcLength(c, False) for c in contours]
+        order = sorted(range(len(contours)), key=lambda k: arcs[k], reverse=True)
+        contours = [contours[k] for k in order[:max_contours]]
+        log.warning("extract_edge_hierarchy: capped contours from %d to %d", len(order), max_contours)
+
     max_arc  = max((cv2.arcLength(c, False) for c in contours), default=1.0)
     max_grad = float(grad.max()) + 1e-6
 
+    _t0 = time.perf_counter()
+    _time_budget_exceeded = False
+
     for eid, cnt in enumerate(contours):
+        # A13: time budget — check every 200 contours to avoid per-iteration overhead
+        if eid % 200 == 0 and eid > 0:
+            if time.perf_counter() - _t0 > max_time_secs:
+                log.warning(
+                    "extract_edge_hierarchy: time budget %.1fs exceeded after %d contours; stopping",
+                    max_time_secs, eid,
+                )
+                _time_budget_exceeded = True
+                break
+
         arc    = float(cv2.arcLength(cnt, False))
         if arc < _MIN_ARC:
             continue
@@ -223,6 +252,12 @@ def extract_edge_hierarchy(
             cv2.polylines(maps_texture, [draw_pts], False, 255, 1)
         else:
             cv2.polylines(maps_decorative, [draw_pts], False, 255, 1)
+
+    # A13: trim to max_edges by importance (discard low-value texture edges first)
+    if len(edges) > max_edges:
+        edges.sort(key=lambda e: e.importance, reverse=True)
+        edges = edges[:max_edges]
+        log.warning("extract_edge_hierarchy: trimmed edge list to %d", max_edges)
 
     maps = {
         "primary":    maps_primary,

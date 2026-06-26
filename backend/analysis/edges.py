@@ -187,6 +187,8 @@ def extract_edge_hierarchy(
 
         importance = composite  # store composite as importance (diagnostic)
 
+        # Exclusion policy: skip entirely — do NOT reclassify texture→decorative.
+        # maps["texture"] will naturally remain all-zeros if no texture edges are drawn.
         if etype == "texture" and not include_texture:
             continue   # do not append, do not draw
 

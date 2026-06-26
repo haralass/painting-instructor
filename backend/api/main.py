@@ -1,66 +1,99 @@
 from __future__ import annotations
 import uuid
 from pathlib import Path
-from typing import Literal
 
-from fastapi import FastAPI, UploadFile, HTTPException
+from fastapi import FastAPI, UploadFile, Form, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from fastapi.staticfiles import StaticFiles
 
-from ..workers.tasks import run_pipeline
+from ..workers.tasks import run_pipeline, celery_app
 
-app = FastAPI(title="Personal Art Book API", version="0.1.0")
+app = FastAPI(title="Painting Instructor API", version="0.2.0")
 
-UPLOAD_DIR = Path("outputs/uploads")
+# ── CORS ─────────────────────────────────────────────────────────────────────
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ── Static file serving for generated outputs ─────────────────────────────────
+OUTPUTS_DIR = Path("outputs")
+OUTPUTS_DIR.mkdir(exist_ok=True)
+app.mount("/outputs", StaticFiles(directory=str(OUTPUTS_DIR)), name="outputs")
+
+UPLOAD_DIR = OUTPUTS_DIR / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-
-class JobStatus(BaseModel):
-    job_id: str
-    status: Literal["queued", "processing", "done", "error"]
-    pages: list[str] = []
-    error: str | None = None
+ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
 
 
-@app.post("/jobs/", response_model=JobStatus)
-async def create_job(file: UploadFile) -> JobStatus:
-    """Upload a photo and start the art-book pipeline."""
-    if file.content_type not in ("image/jpeg", "image/png", "image/webp", "image/heic"):
-        raise HTTPException(400, "Unsupported image type")
+# ── POST /jobs/ ───────────────────────────────────────────────────────────────
+@app.post("/jobs/")
+async def create_job(
+    file:     UploadFile,
+    medium:   str = Form("oil"),
+    n_colors: int = Form(32),
+):
+    """Upload a photo and start the painting instructor pipeline."""
+    if file.content_type not in ALLOWED_TYPES:
+        raise HTTPException(400, f"Unsupported image type: {file.content_type}")
 
-    job_id  = str(uuid.uuid4())
-    img_path = UPLOAD_DIR / f"{job_id}{Path(file.filename or 'img.jpg').suffix}"
+    job_id   = str(uuid.uuid4())
+    suffix   = Path(file.filename or "img.jpg").suffix or ".jpg"
+    img_path = UPLOAD_DIR / f"{job_id}{suffix}"
     img_path.write_bytes(await file.read())
 
-    task = run_pipeline.delay(str(img_path), job_id)
+    # Use job_id as the Celery task ID so GET /jobs/{job_id} can find it
+    run_pipeline.apply_async(
+        args=[str(img_path), job_id],
+        kwargs={"medium": medium, "n_colors": n_colors},
+        task_id=job_id,
+    )
 
-    return JobStatus(job_id=job_id, status="queued")
+    return {"job_id": job_id}
 
 
-@app.get("/jobs/{job_id}", response_model=JobStatus)
-def get_job(job_id: str) -> JobStatus:
-    """Poll job status and retrieve output page paths when done."""
+# ── GET /jobs/{job_id} ────────────────────────────────────────────────────────
+@app.get("/jobs/{job_id}")
+def get_job(job_id: str):
+    """Poll job status. Returns Celery state + current step + result when done."""
     from celery.result import AsyncResult
-    from ..workers.tasks import celery_app
 
-    result = AsyncResult(job_id, app=celery_app)
+    r = AsyncResult(job_id, app=celery_app)
 
-    if result.state == "PENDING":
-        return JobStatus(job_id=job_id, status="queued")
-    if result.state == "STARTED":
-        return JobStatus(job_id=job_id, status="processing")
-    if result.state == "SUCCESS":
-        return JobStatus(job_id=job_id, status="done", pages=result.result or [])
-    if result.state == "FAILURE":
-        return JobStatus(job_id=job_id, status="error", error=str(result.result))
+    if r.state == "PENDING":
+        return {"status": "PENDING"}
 
-    return JobStatus(job_id=job_id, status="processing")
+    if r.state == "STARTED":
+        meta = r.info or {}
+        return {"status": "STARTED", "step": meta.get("step", "")}
+
+    if r.state == "SUCCESS":
+        result = r.result or {}
+        return {
+            "status": "SUCCESS",
+            "result": {
+                "pages": result.get("pages", []),
+                "video": result.get("video"),
+                "pdf":   result.get("pdf"),
+            },
+            "errors": result.get("errors", {}),
+        }
+
+    if r.state == "FAILURE":
+        return {"status": "FAILURE", "error": str(r.result)}
+
+    return {"status": r.state}
 
 
+# ── GET /jobs/{job_id}/pdf ────────────────────────────────────────────────────
 @app.get("/jobs/{job_id}/pdf")
 def download_pdf(job_id: str):
-    """Download the assembled PDF for a completed job."""
-    pdf_path = Path(f"outputs/{job_id}/art_book.pdf")
+    pdf_path = OUTPUTS_DIR / job_id / "tutorial_book.pdf"
     if not pdf_path.exists():
-        raise HTTPException(404, "PDF not ready")
-    return FileResponse(pdf_path, media_type="application/pdf", filename="art_book.pdf")
+        raise HTTPException(404, "PDF not ready yet")
+    return FileResponse(pdf_path, media_type="application/pdf",
+                        filename="tutorial_book.pdf")

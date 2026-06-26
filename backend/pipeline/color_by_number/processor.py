@@ -5,9 +5,7 @@ import pywt
 from PIL import Image, ImageDraw, ImageFont
 from skimage import segmentation, graph as sk_graph, measure, color as skcolor
 from sklearn.cluster import MiniBatchKMeans
-from scipy import ndimage
 from scipy.ndimage import distance_transform_edt
-from shapely.geometry import Point, MultiPoint
 
 _bisenet_model = None
 

@@ -27,7 +27,6 @@ def process(img: Image.Image, n_colors: int = 18, grid: int = 40) -> Image.Image
 
     km = MiniBatchKMeans(n_clusters=n_colors, n_init=5, random_state=42)
     km.fit(lab.reshape(-1, 3))
-    labels = km.labels_.reshape(H, W)
     palette = (skcolor.lab2rgb(km.cluster_centers_.reshape(1, -1, 3))[0] * 255).astype(np.uint8)
 
     out = Image.new("RGB", (W, H), "white")

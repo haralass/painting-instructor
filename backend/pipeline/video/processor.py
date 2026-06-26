@@ -20,21 +20,12 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import cv2
 
+from ...utils.fonts import get_font as _font
+
 FPS       = 24
 OUT_W     = 1080          # output video width (height derived from aspect)
 HOLD_SECS = 2.0           # hold time for static frames (reference, final)
 FADE_SECS = 3.0           # transition duration for animated phases
-
-
-def _font(size: int) -> ImageFont.FreeTypeFont:
-    for p in ["/System/Library/Fonts/HelveticaNeue.ttc",
-              "/System/Library/Fonts/Helvetica.ttc",
-              "/System/Library/Fonts/Arial.ttf"]:
-        try:
-            return ImageFont.truetype(p, size)
-        except OSError:
-            pass
-    return ImageFont.load_default()
 
 
 def _to_rgb(img: Image.Image, size: tuple[int, int]) -> np.ndarray:

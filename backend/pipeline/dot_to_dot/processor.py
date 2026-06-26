@@ -1,18 +1,13 @@
 from __future__ import annotations
+import time
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from skimage.morphology import skeletonize
+from scipy.spatial import cKDTree
 import sknw
 
-
-def _font(size: int) -> ImageFont.FreeTypeFont:
-    for p in ["/System/Library/Fonts/HelveticaNeue.ttc",
-              "/System/Library/Fonts/Helvetica.ttc",
-              "/System/Library/Fonts/Arial.ttf"]:
-        try: return ImageFont.truetype(p, size)
-        except OSError: pass
-    return ImageFont.load_default()
+from ...utils.fonts import get_font as _font
 
 
 def _resample_polyline(pts: np.ndarray, n: int) -> np.ndarray:
@@ -31,77 +26,116 @@ def _resample_polyline(pts: np.ndarray, n: int) -> np.ndarray:
     return np.stack([x, y], axis=1)
 
 
+def _chain_nearest(pts: np.ndarray, n_dots: int) -> np.ndarray:
+    """
+    Greedy nearest-endpoint chaining via cKDTree — O(D log D) instead of O(D²).
+    Chain a set of 2D polyline endpoints into an ordered sequence.
+    """
+    if len(pts) == 0:
+        return pts
+    used = np.zeros(len(pts), dtype=bool)
+    order = [0]
+    used[0] = True
+    tree = cKDTree(pts)
+
+    for _ in range(len(pts) - 1):
+        cur = pts[order[-1]]
+        # Query more neighbours than needed to find first unvisited
+        k = min(20, len(pts))
+        dists, idxs = tree.query(cur, k=k)
+        found = False
+        for idx in (idxs if np.ndim(idxs) > 0 else [idxs]):
+            if not used[int(idx)]:
+                order.append(int(idx))
+                used[int(idx)] = True
+                found = True
+                break
+        if not found:
+            break
+    return pts[np.array(order)]
+
+
 def _chain_polylines(polylines: list[np.ndarray]) -> np.ndarray:
     """
-    Vectorised greedy nearest-endpoint chaining.
-    Builds start/end arrays and uses numpy distance queries — ~100× faster
-    than the pure-Python loop for large polyline counts.
+    A12: Greedy nearest-endpoint chaining via cKDTree — O(D log D) instead of O(D²).
+
+    Builds a tree on all polyline endpoints, then at each step queries the nearest
+    unvisited endpoint from the current chain tail.
     """
     if not polylines:
         return np.empty((0, 2))
     remaining = [p.copy() for p in polylines if len(p) >= 2]
     if not remaining:
         return np.empty((0, 2))
+    if len(remaining) == 1:
+        return remaining[0]
 
     n = len(remaining)
-    starts  = np.array([p[0]  for p in remaining], dtype=float)  # (n, 2)
-    ends    = np.array([p[-1] for p in remaining], dtype=float)  # (n, 2)
     visited = np.zeros(n, dtype=bool)
 
-    chain   = [remaining[0]]
+    # Endpoints: ep_arr[2*i] = start of polyline i, ep_arr[2*i+1] = end of polyline i
+    ep_arr = np.empty((n * 2, 2), dtype=float)
+    for i, p in enumerate(remaining):
+        ep_arr[2 * i]     = p[0]
+        ep_arr[2 * i + 1] = p[-1]
+
+    tree = cKDTree(ep_arr)
+
+    chain = [remaining[0]]
     visited[0] = True
 
     while not visited.all():
         tail = chain[-1][-1]
-        ds = np.sum((starts - tail) ** 2, axis=1)
-        de = np.sum((ends   - tail) ** 2, axis=1)
-        ds[visited] = np.inf
-        de[visited] = np.inf
+        k = min(2 * n, 64)
+        dists, idxs = tree.query(tail, k=k)
+        if np.ndim(idxs) == 0:
+            idxs = [int(idxs)]
 
-        i_s, i_e = int(ds.argmin()), int(de.argmin())
-        if ds[i_s] <= de[i_e]:
-            chain.append(remaining[i_s])
-            visited[i_s] = True
-        else:
-            chain.append(remaining[i_e][::-1])
-            visited[i_e] = True
+        found = False
+        for ep_idx in idxs:
+            poly_idx = int(ep_idx) // 2
+            if visited[poly_idx]:
+                continue
+            is_end = (int(ep_idx) % 2 == 1)   # True if nearest was the end point
+            seg = remaining[poly_idx][::-1] if is_end else remaining[poly_idx]
+            chain.append(seg)
+            visited[poly_idx] = True
+            found = True
+            break
+
+        if not found:
+            # All k nearest are visited — fall back to first unvisited
+            for i in range(n):
+                if not visited[i]:
+                    chain.append(remaining[i])
+                    visited[i] = True
+                    break
 
     return np.concatenate(chain, axis=0)
 
 
-def _two_opt_crossings(pts: np.ndarray, max_iter: int = 60) -> np.ndarray:
-    """
-    Vectorised 2-opt: cross-product segment-intersection test via numpy.
-    Runs in O(n²) but all inner work is numpy, ~50× faster than pure Python.
-    """
+def _local_2opt(pts: np.ndarray, max_iters: int = 200, max_secs: float = 0.5) -> np.ndarray:
+    """Bounded local 2-opt: only checks nearby segments, not all pairs."""
     n = len(pts)
     if n < 4:
         return pts
-
-    for _ in range(max_iter):
+    improved = True
+    iters = 0
+    t0 = time.perf_counter()
+    while improved and iters < max_iters and (time.perf_counter() - t0) < max_secs:
         improved = False
-        for i in range(1, n - 2):
-            a, b = pts[i - 1], pts[i]
-            # vectorise the check over all j > i+1
-            C = pts[i + 1:-1]
-            D = pts[i + 2:]
-            # cross products for segment (a,b) vs (C[k],D[k])
-            ab = b - a
-            def cross2d(u, v):
-                return u[..., 0] * v[..., 1] - u[..., 1] * v[..., 0]
-            d1 = cross2d(C - a, ab)
-            d2 = cross2d(D - a, ab)
-            cd = D - C
-            d3 = cross2d(a - C, cd)
-            d4 = cross2d(b - C, cd)
-            cross = (np.sign(d1) != np.sign(d2)) & (np.sign(d3) != np.sign(d4))
-            if cross.any():
-                j = int(np.argmax(cross)) + i + 2
-                pts[i:j] = pts[i:j][::-1]
-                improved = True
-                break   # restart outer loop after first swap
-        if not improved:
-            break
+        iters += 1
+        # Only check segments within a local window of 20 (not global O(n²))
+        for i in range(n - 1):
+            window_end = min(n, i + 20)
+            for j in range(i + 2, window_end):
+                d_before = (np.linalg.norm(pts[i + 1] - pts[i]) +
+                            np.linalg.norm(pts[(j + 1) % n] - pts[j]))
+                d_after  = (np.linalg.norm(pts[j] - pts[i]) +
+                            np.linalg.norm(pts[(j + 1) % n] - pts[i + 1]))
+                if d_after < d_before - 1e-6:
+                    pts[i + 1:j + 1] = pts[i + 1:j + 1][::-1]
+                    improved = True
     return pts
 
 
@@ -121,9 +155,10 @@ def process(
     2. Skeletonize → 1px skeleton
     3. sknw → ordered polylines
     4. Arc-length resampling (proportional dot allocation per polyline)
-    5. Vectorised greedy chaining (numpy, ~100× faster than pure Python)
-    6. Vectorised 2-opt crossing removal
-    7. Numbered circle rendering
+    5. cKDTree greedy chaining — O(D log D) endpoint chaining
+    6. Bounded local 2-opt (window=20, max 200 iters, 0.5s cap)
+    7. Final dot-count cap via uniform subsampling
+    8. Numbered circle rendering
 
     Args:
         line_art_img: Pre-computed line art (black lines on white).
@@ -149,6 +184,10 @@ def process(
     binary = (edge_map > int(threshold * 255)).astype(np.uint8)
     skel   = skeletonize(binary > 0).astype(np.uint8)
 
+    # ── Safe empty skeleton handling ─────────────────────────────────────────
+    if skel is None or skel.sum() == 0:
+        return Image.fromarray(np.full((H, W, 3), 255, dtype=np.uint8))
+
     # ── Skeleton → polylines ──────────────────────────────────────────────────
     graph     = sknw.build_sknw(skel)
     polylines = []
@@ -159,8 +198,10 @@ def process(
 
     if not polylines:
         ys, xs  = np.where(skel > 0)
+        if len(xs) == 0:
+            return Image.fromarray(np.full((H, W, 3), 255, dtype=np.uint8))
         pts_fb  = np.column_stack([xs, ys]).astype(float)
-        idx     = np.round(np.linspace(0, len(pts_fb) - 1, n_dots)).astype(int)
+        idx     = np.round(np.linspace(0, len(pts_fb) - 1, min(n_dots, len(pts_fb)))).astype(int)
         ordered = pts_fb[idx]
     else:
         arc_lens = []
@@ -174,8 +215,20 @@ def process(
             k = max(3, int(n_dots * al / total))
             resampled.append(_resample_polyline(p, k))
 
+        # Collect all resampled points and chain with cKDTree
+        all_pts = np.concatenate(resampled, axis=0)
+
+        # Check for empty endpoints before chaining
+        if len(all_pts) == 0:
+            return Image.fromarray(np.full((H, W, 3), 255, dtype=np.uint8))
+
         chained = _chain_polylines(resampled)
-        ordered = _two_opt_crossings(chained, max_iter=60)
+        ordered = _local_2opt(chained.copy(), max_iters=200, max_secs=0.5)
+
+    # ── Final dot-count cap — subsample evenly if over budget ────────────────
+    if len(ordered) > n_dots:
+        idx = np.round(np.linspace(0, len(ordered) - 1, n_dots)).astype(int)
+        ordered = ordered[idx]
 
     # ── Clamp to image bounds ─────────────────────────────────────────────────
     dots     = ordered.astype(int)

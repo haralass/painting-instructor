@@ -1,6 +1,9 @@
 from __future__ import annotations
+import os
 import uuid
 from pathlib import Path
+
+from ..utils.paths import outputs_root
 
 from fastapi import FastAPI, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,19 +11,34 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..workers.tasks import run_pipeline, celery_app
+from ..schemas.jobs import (
+    CreateJobResponse,
+    JobResponse,
+    JobResult,
+    validate_medium,
+    validate_palette_size,
+    validate_detail_level,
+    validate_value_zones,
+)
+from ..teaching.mediums import MEDIUMS, get_medium as _get_medium_cfg
 
-app = FastAPI(title="Painting Instructor API", version="0.2.0")
+app = FastAPI(title="Painting Instructor API", version="0.3.0")
 
 # ── CORS ─────────────────────────────────────────────────────────────────────
+_origins = os.getenv(
+    "CORS_ORIGINS",
+    "http://localhost:3000,http://127.0.0.1:3000",
+).split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=[o.strip() for o in _origins],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ── Static file serving for generated outputs ─────────────────────────────────
-OUTPUTS_DIR = Path("outputs")
+# ── Static file serving ───────────────────────────────────────────────────────
+OUTPUTS_DIR = outputs_root()
 OUTPUTS_DIR.mkdir(exist_ok=True)
 app.mount("/outputs", StaticFiles(directory=str(OUTPUTS_DIR)), name="outputs")
 
@@ -29,64 +47,130 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
 
+# Map Celery states → canonical lowercase status
+_CELERY_TO_STATUS = {
+    "PENDING":  "queued",
+    "RECEIVED": "queued",
+    "STARTED":  "processing",
+    "PROGRESS": "processing",
+    "SUCCESS":  "completed",           # may be refined to completed_with_warnings below
+    "FAILURE":  "failed",
+    "RETRY":    "processing",
+    "REVOKED":  "failed",
+}
+
 
 # ── POST /jobs/ ───────────────────────────────────────────────────────────────
-@app.post("/jobs/")
+@app.post("/jobs/", response_model=CreateJobResponse)
 async def create_job(
-    file:     UploadFile,
-    medium:   str = Form("oil"),
-    n_colors: int = Form(32),
+    file:          UploadFile,
+    medium:        str = Form("oil"),
+    # Accept both palette_size (canonical) and n_colors (backward-compat)
+    palette_size:  int = Form(0),
+    n_colors:      int = Form(0),
+    detail_level:  int = Form(3),
+    value_zones:   int = Form(5),
+    texture_detail:     bool = Form(True),
+    background_detail:  bool = Form(False),
+    region_complexity:  int  = Form(3),   # A6: 1–5 hierarchy resolution
 ):
-    """Upload a photo and start the painting instructor pipeline."""
+    """Upload a reference photo and start the painting instructor pipeline."""
     if file.content_type not in ALLOWED_TYPES:
         raise HTTPException(400, f"Unsupported image type: {file.content_type}")
 
-    job_id   = str(uuid.uuid4())
-    suffix   = Path(file.filename or "img.jpg").suffix or ".jpg"
+    # Resolve palette_size: canonical wins; fall back to n_colors; default 12
+    resolved_palette = palette_size or n_colors or 12
+
+    if not (1 <= region_complexity <= 5):
+        raise HTTPException(422, f"region_complexity must be 1–5, got {region_complexity}")
+
+    try:
+        medium        = validate_medium(medium)
+        resolved_palette = validate_palette_size(resolved_palette)
+        detail_level  = validate_detail_level(detail_level)
+        value_zones   = validate_value_zones(value_zones)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+    job_id = str(uuid.uuid4())
+    suffix = Path(file.filename or "img.jpg").suffix or ".jpg"
     img_path = UPLOAD_DIR / f"{job_id}{suffix}"
     img_path.write_bytes(await file.read())
 
-    # Use job_id as the Celery task ID so GET /jobs/{job_id} can find it
     run_pipeline.apply_async(
         args=[str(img_path), job_id],
-        kwargs={"medium": medium, "n_colors": n_colors},
+        kwargs={
+            "medium":              medium,
+            "palette_size":        resolved_palette,
+            "detail_level":        detail_level,
+            "value_zones":         value_zones,
+            "texture_detail":      texture_detail,
+            "background_detail":   background_detail,
+            "region_complexity":   region_complexity,
+        },
         task_id=job_id,
     )
 
-    return {"job_id": job_id}
+    return CreateJobResponse(job_id=job_id)
 
 
 # ── GET /jobs/{job_id} ────────────────────────────────────────────────────────
-@app.get("/jobs/{job_id}")
-def get_job(job_id: str):
-    """Poll job status. Returns Celery state + current step + result when done."""
+@app.get("/jobs/{job_id}", response_model=JobResponse)
+def get_job(job_id: str) -> JobResponse:
+    """Poll job status. Returns canonical status + progress + result when done."""
     from celery.result import AsyncResult
 
     r = AsyncResult(job_id, app=celery_app)
+    state = r.state
 
-    if r.state == "PENDING":
-        return {"status": "PENDING"}
+    if state in ("PENDING", "RECEIVED"):
+        return JobResponse(job_id=job_id, status="queued", progress=0, step="queued", message="Waiting to start")
 
-    if r.state == "STARTED":
-        meta = r.info or {}
-        return {"status": "STARTED", "step": meta.get("step", "")}
+    if state in ("STARTED", "PROGRESS"):
+        meta        = r.info or {}
+        progress_n  = int(meta.get("progress", 5))
+        step        = str(meta.get("step", ""))
+        message     = str(meta.get("message", "Processing…"))
+        analysis_rdy = progress_n >= 80 or step in ("analysis_ready", "rendering_extras", "video", "pdf", "manifest")
+        return JobResponse(
+            job_id=job_id,
+            status="processing",
+            progress=progress_n,
+            step=step,
+            message=message,
+            analysis_ready=analysis_rdy,
+        )
 
-    if r.state == "SUCCESS":
+    if state == "SUCCESS":
         result = r.result or {}
-        return {
-            "status": "SUCCESS",
-            "result": {
-                "pages": result.get("pages", []),
-                "video": result.get("video"),
-                "pdf":   result.get("pdf"),
-            },
-            "errors": result.get("errors", {}),
-        }
+        pages  = result.get("pages", [])
+        # Convert absolute paths to /outputs/... URLs
+        pages_urls = [_path_to_url(p, job_id) for p in pages if p]
+        manifest_url = f"/outputs/{job_id}/manifest.json"
+        warnings = result.get("warnings", [])
+        status_str = "completed_with_warnings" if warnings else "completed"
+        message = f"Tutorial ready (warnings: {', '.join(warnings)})" if warnings else "Tutorial ready"
+        return JobResponse(
+            job_id=job_id,
+            status=status_str,
+            progress=100,
+            step="completed",
+            message=message,
+            result=JobResult(
+                manifest=manifest_url,
+                pages=pages_urls,
+                video=_path_to_url(result.get("video"), job_id),
+                pdf=_path_to_url(result.get("pdf"), job_id),
+            ),
+        )
 
-    if r.state == "FAILURE":
-        return {"status": "FAILURE", "error": str(r.result)}
+    if state == "FAILURE":
+        return JobResponse(
+            job_id=job_id, status="failed", progress=0, step="failed",
+            message="Pipeline failed", error=str(r.result),
+        )
 
-    return {"status": r.state}
+    return JobResponse(job_id=job_id, status="processing", progress=5, step=state.lower(), message="Processing…")
 
 
 # ── GET /jobs/{job_id}/pdf ────────────────────────────────────────────────────
@@ -95,5 +179,42 @@ def download_pdf(job_id: str):
     pdf_path = OUTPUTS_DIR / job_id / "tutorial_book.pdf"
     if not pdf_path.exists():
         raise HTTPException(404, "PDF not ready yet")
-    return FileResponse(pdf_path, media_type="application/pdf",
-                        filename="tutorial_book.pdf")
+    return FileResponse(pdf_path, media_type="application/pdf", filename="tutorial_book.pdf")
+
+
+@app.get("/mediums/")
+def list_mediums():
+    """List available painting mediums with their recommended settings."""
+    return {
+        mid: {
+            "name":                     cfg["name"],
+            "recommended_value_zones":  cfg["recommended_value_zones"],
+            "recommended_palette_size": cfg["recommended_palette_size"],
+            "edge_strategy":            cfg["edge_strategy"],
+            "texture_strategy":         cfg["texture_strategy"],
+            "stage_count":              len(cfg["stages"]),
+        }
+        for mid, cfg in MEDIUMS.items()
+    }
+
+
+@app.get("/mediums/{medium}")
+def get_medium_config(medium: str):
+    """Full config for a specific painting medium including ordered stages and instructions."""
+    from ..schemas.jobs import VALID_MEDIUMS
+    if medium not in VALID_MEDIUMS:
+        raise HTTPException(404, f"Unknown medium: {medium!r}")
+    return _get_medium_cfg(medium)
+
+
+# ── helpers ───────────────────────────────────────────────────────────────────
+def _path_to_url(path: str | None, job_id: str) -> str | None:
+    if not path:
+        return None
+    p = Path(path)
+    try:
+        # Convert outputs/{job_id}/foo.png → /outputs/{job_id}/foo.png
+        rel = p.relative_to(OUTPUTS_DIR)
+        return f"/outputs/{rel}"
+    except ValueError:
+        return f"/outputs/{job_id}/{p.name}"

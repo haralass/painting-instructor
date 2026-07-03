@@ -43,7 +43,6 @@ class _UnionFind:
 def build_region_hierarchy(
     cache: ImageCache,
     palette_size: int,
-    detail_level: int,
     n_value_zones: int,
     value_colour_families: dict,
     seed: int = 42,
@@ -57,6 +56,10 @@ def build_region_hierarchy(
 
     region_complexity (1–5): controls how many superpixels are used as the
     base segmentation and how fine the l5 cut is. 3 = balanced default.
+    This is the only knob that controls hierarchy resolution — all 5 levels
+    are always built; there is no separate "detail_level" that changes what
+    gets generated (see initial_view_level in the API layer for the
+    view-only concept).
 
     Pass pre-computed zone_map/zones to avoid recomputing them inside
     (pipeline.py already computes them; passing avoids a redundant O(P) pass).
@@ -70,7 +73,7 @@ def build_region_hierarchy(
     regions    : flat list of Region objects across all 5 levels
     """
     return _build_merge_tree_hierarchy(
-        cache, palette_size, detail_level, n_value_zones, value_colour_families, seed,
+        cache, palette_size, n_value_zones, value_colour_families, seed,
         zone_map=zone_map, zones=zones,
         region_complexity=region_complexity,
     )
@@ -109,7 +112,6 @@ def _compute_region_targets(cache: ImageCache, n_base: int, region_complexity: i
 def _build_merge_tree_hierarchy(
     cache: ImageCache,
     palette_size: int,
-    detail_level: int,
     n_value_zones: int,
     value_colour_families: dict,
     seed: int,

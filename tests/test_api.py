@@ -47,7 +47,7 @@ class TestCreateJob:
         with patch("backend.workers.tasks.run_pipeline.apply_async", side_effect=_fake_apply_async):
             res = client.post("/jobs/", files=[_make_upload()],
                               data={"medium": "oil", "palette_size": "12",
-                                    "detail_level": "3", "value_zones": "5"})
+                                    "initial_view_level": "3", "value_zones": "5"})
         assert res.status_code == 200
         body = res.json()
         assert "job_id" in body
@@ -83,10 +83,10 @@ class TestCreateJob:
                               data={"medium": "oil", "palette_size": "100"})
         assert res.status_code == 422
 
-    def test_invalid_detail_level_rejected(self):
+    def test_invalid_initial_view_level_rejected(self):
         with patch("backend.workers.tasks.run_pipeline.apply_async", side_effect=_fake_apply_async):
             res = client.post("/jobs/", files=[_make_upload()],
-                              data={"medium": "oil", "palette_size": "12", "detail_level": "9"})
+                              data={"medium": "oil", "palette_size": "12", "initial_view_level": "9"})
         assert res.status_code == 422
 
     def test_invalid_value_zones_rejected(self):

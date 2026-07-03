@@ -17,7 +17,7 @@ from ..schemas.jobs import (
     JobResult,
     validate_medium,
     validate_palette_size,
-    validate_detail_level,
+    validate_initial_view_level,
     validate_value_zones,
 )
 from ..teaching.mediums import MEDIUMS, get_medium as _get_medium_cfg
@@ -68,7 +68,7 @@ async def create_job(
     # Accept both palette_size (canonical) and n_colors (backward-compat)
     palette_size:  int = Form(0),
     n_colors:      int = Form(0),
-    detail_level:  int = Form(3),
+    initial_view_level: int = Form(3),
     value_zones:   int = Form(5),
     texture_detail:     bool = Form(True),
     background_detail:  bool = Form(False),
@@ -87,7 +87,7 @@ async def create_job(
     try:
         medium        = validate_medium(medium)
         resolved_palette = validate_palette_size(resolved_palette)
-        detail_level  = validate_detail_level(detail_level)
+        initial_view_level = validate_initial_view_level(initial_view_level)
         value_zones   = validate_value_zones(value_zones)
     except ValueError as exc:
         raise HTTPException(422, str(exc))
@@ -102,7 +102,7 @@ async def create_job(
         kwargs={
             "medium":              medium,
             "palette_size":        resolved_palette,
-            "detail_level":        detail_level,
+            "initial_view_level":  initial_view_level,
             "value_zones":         value_zones,
             "texture_detail":      texture_detail,
             "background_detail":   background_detail,

@@ -10,7 +10,10 @@ from .preprocessing import prepare
 from .values import compute_value_zones, render_value_map
 from .colours import extract_colour_families
 from .regions import build_region_hierarchy
-from .edges import extract_edge_hierarchy, render_outline_levels, export_edges_svg
+from .edges import (
+    extract_edge_hierarchy, render_outline_levels, export_edges_svg,
+    build_region_ancestor_chain, filter_edges_for_level, bucket_edge_maps,
+)
 from .renderer import render_detail_levels
 from .models import _get_medium_strategy
 from ..utils.paths import rel_to_outputs
@@ -22,7 +25,6 @@ def run_hierarchical_analysis(
     img: Image.Image,
     out_dir: Path,
     palette_size: int,
-    detail_level: int,
     value_zones: int,
     medium: str,
     fg_mask: np.ndarray | None = None,
@@ -59,7 +61,6 @@ def run_hierarchical_analysis(
     label_maps, regions = build_region_hierarchy(
         cache=cache,
         palette_size=palette_size,
-        detail_level=detail_level,
         n_value_zones=value_zones,
         value_colour_families=colour_internal,
         seed=seed,
@@ -77,10 +78,12 @@ def run_hierarchical_analysis(
         f.linked_region_ids = [r.id for r in regions if r.colour_family_id == f.id]
 
     # ── 4. Edge hierarchy ─────────────────────────────────────────────────────
-    # Use l3/l4 for edge context (good structural detail)
+    # Prefer the FINEST available scale for edge/region context: Region.parent_id
+    # only points to coarser levels, so ancestor roll-up for level-aware outlines
+    # (below) can only look coarser than edge_scale, never finer.
     label_map_for_edges = None
     edge_scale = None
-    for sc in ["l3", "l4", "l2", "l5", "l1"]:
+    for sc in ["l5", "l4", "l3", "l2", "l1"]:
         if sc in label_maps:
             label_map_for_edges = label_maps[sc]
             edge_scale = sc
@@ -113,6 +116,23 @@ def run_hierarchical_analysis(
     for name, arr in edge_maps.items():
         PILImage.fromarray(255 - arr).save(str(out_dir / f"edges_{name}.png"))
 
+    # ── 4b. Level-aware outline filtering ─────────────────────────────────────
+    # Edges classified above are global; for each of the 5 detail levels we
+    # additionally drop edges that are interior noise at that level's own
+    # region resolution (both sides roll up to the same coarser mass), so
+    # Level 1 outlines reflect l1 structure and Level 5 shows full l5 detail
+    # instead of every level just being a type-subset of one fixed-scale map.
+    level_edge_maps: dict[int, dict[str, np.ndarray]] = {}
+    if edge_scale is not None:
+        ancestor_chains = build_region_ancestor_chain(regions, edge_scale)
+        for lvl in range(1, 6):
+            target_scale = f"l{lvl}"
+            level_edges = filter_edges_for_level(edges, lvl, target_scale, ancestor_chains)
+            level_edge_maps[lvl] = bucket_edge_maps(level_edges, cache.H, cache.W)
+    else:
+        for lvl in range(1, 6):
+            level_edge_maps[lvl] = edge_maps
+
     # ── 5. Render 5 detail levels ─────────────────────────────────────────────
     detail_levels = render_detail_levels(
         cache=cache,
@@ -126,6 +146,7 @@ def run_hierarchical_analysis(
         edges=edges,
         medium_strategy=strategy,
         edge_maps=edge_maps,  # A9: pass individual maps for per-medium processing
+        level_edge_maps=level_edge_maps,  # level-aware outline source (see above)
     )
 
     # ── 6. Write regions JSON ─────────────────────────────────────────────────
@@ -165,6 +186,14 @@ def run_hierarchical_analysis(
         if (out_dir / f"edges_{name}.png").exists()
     }
 
+    # Global (non-level-filtered) outline composite paths — used by lesson_plan
+    # to resolve stage layer keys like "outlines_primary_secondary".
+    _outline_composite_paths = {
+        name: str(out_dir / f"{name}.png")
+        for name in outline_composites
+        if (out_dir / f"{name}.png").exists()
+    }
+
     return {
         "detail_levels":       {k: _lvl_dict(v) for k, v in detail_levels.items()},
         "palette":             [p.model_dump() for p in palette],
@@ -179,4 +208,5 @@ def run_hierarchical_analysis(
         "edge_scale":          edge_scale,
         "label_to_region_id":  label_to_region_id,
         "edge_maps":           _edge_map_paths,  # A4: individual maps for frontend sublayer toggles
+        "outline_composites":  _outline_composite_paths,  # global composites for lesson_plan resolution
     }

@@ -13,6 +13,17 @@ log = logging.getLogger(__name__)
 # Minimum contour arc-length to count as an edge
 _MIN_ARC = 8
 
+# Which edge types are visible at each of the 5 hierarchical detail levels.
+# Shared between pipeline.py (level-aware outline filtering) and renderer.py
+# (edge_ids metadata) so the two never drift apart.
+LEVEL_EDGE_TYPES: dict[int, set[str]] = {
+    1: {"primary"},
+    2: {"primary"},
+    3: {"primary", "secondary"},
+    4: {"primary", "secondary", "decorative"},
+    5: {"primary", "secondary", "decorative", "texture"},
+}
+
 
 def _label_to_rid(raw_lbl: int | None, mapping: dict[int, int] | None) -> int | None:
     """
@@ -289,6 +300,88 @@ def render_outline_levels(maps: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         "outlines_detailed":          _composite("primary", "secondary", "decorative"),
         "outlines_full":              _composite("primary", "secondary", "decorative", "texture"),
     }
+
+
+def build_region_ancestor_chain(
+    regions: list,
+    edge_scale: str,
+) -> dict[int, dict[str, int]]:
+    """
+    For every region at edge_scale, walk Region.parent_id up through
+    successively coarser scales and record the ancestor region id at each
+    scale reached. Used to test whether two edge_scale regions still belong
+    to the same mass at a coarser detail level (in which case the edge
+    between them is interior noise at that level, not a boundary).
+
+    Returns {region_id: {scale_name: ancestor_region_id}}, always including
+    edge_scale itself mapping to the region's own id.
+    """
+    regions_by_id = {r.id: r for r in regions}
+    chains: dict[int, dict[str, int]] = {}
+    for r in regions:
+        if r.scale != edge_scale:
+            continue
+        chain = {edge_scale: r.id}
+        cur = r
+        while cur.parent_id is not None:
+            parent = regions_by_id.get(cur.parent_id)
+            if parent is None:
+                break
+            chain[parent.scale] = parent.id
+            cur = parent
+        chains[r.id] = chain
+    return chains
+
+
+def filter_edges_for_level(
+    edges: list[Edge],
+    level: int,
+    target_scale: str,
+    ancestor_chains: dict[int, dict[str, int]],
+) -> list[Edge]:
+    """
+    Keep only edges that are (a) a type visible at this level, and (b) still
+    a boundary between two DIFFERENT regions once rolled up to target_scale.
+    An edge whose two sides collapse into the same coarse region at this
+    level is interior detail that level shouldn't show — this is what makes
+    Level 1 outlines genuinely coarser than Level 5, not just a type filter
+    over one fixed-resolution edge set.
+
+    Edges missing region context on either side (e.g. silhouette edges
+    against background) are always kept — they carry structural meaning
+    regardless of region resolution.
+    """
+    allowed_types = LEVEL_EDGE_TYPES[level]
+    kept: list[Edge] = []
+    for e in edges:
+        if e.type not in allowed_types:
+            continue
+        anc_a = ancestor_chains.get(e.region_a, {}).get(target_scale) if e.region_a is not None else None
+        anc_b = ancestor_chains.get(e.region_b, {}).get(target_scale) if e.region_b is not None else None
+        if anc_a is None or anc_b is None or anc_a != anc_b:
+            kept.append(e)
+    return kept
+
+
+def bucket_edge_maps(edges: list[Edge], H: int, W: int) -> dict[str, np.ndarray]:
+    """
+    Rasterise a list of edges into the four type maps (primary/secondary/
+    decorative/texture), in the same format as extract_edge_hierarchy's
+    `maps` return value (white line on black, per type). Used to turn a
+    level-filtered edge subset back into images for rendering/medium styling.
+    """
+    maps = {
+        "primary":    np.zeros((H, W), dtype=np.uint8),
+        "secondary":  np.zeros((H, W), dtype=np.uint8),
+        "decorative": np.zeros((H, W), dtype=np.uint8),
+        "texture":    np.zeros((H, W), dtype=np.uint8),
+    }
+    for e in edges:
+        if len(e.path) < 2 or e.type not in maps:
+            continue
+        pts = np.array(e.path, dtype=np.int32).reshape(-1, 1, 2)
+        cv2.polylines(maps[e.type], [pts], False, 255, 1)
+    return maps
 
 
 def export_edges_svg(edges: list[Edge], width: int, height: int) -> str:

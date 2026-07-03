@@ -44,9 +44,14 @@ def validate_palette_size(v: int) -> int:
     return v
 
 
-def validate_detail_level(v: int) -> int:
+def validate_initial_view_level(v: int) -> int:
+    """
+    initial_view_level only picks which of the 5 always-generated detail
+    levels the frontend opens on first — it does not change what gets
+    analysed or rendered.
+    """
     if not (1 <= v <= 5):
-        raise ValueError(f"detail_level must be between 1 and 5, got {v}")
+        raise ValueError(f"initial_view_level must be between 1 and 5, got {v}")
     return v
 
 

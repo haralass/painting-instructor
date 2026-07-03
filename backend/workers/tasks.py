@@ -48,7 +48,7 @@ def run_pipeline(
     job_id: str,
     medium: str = "oil",
     palette_size: int = 12,
-    detail_level: int = 3,
+    initial_view_level: int = 3,
     value_zones: int = 5,
     texture_detail: bool = True,
     background_detail: bool = False,
@@ -74,7 +74,6 @@ def run_pipeline(
      12. manifest         — manifest.json describing all outputs
     """
     from PIL import Image
-    from fpdf import FPDF
 
     from ..preprocessing.processor import load_image
     from ..pipeline.line_art.processor import process_with_mask as line_art_with_mask
@@ -84,6 +83,9 @@ def run_pipeline(
     from ..pipeline.color_by_number.processor import process as color_by_number
     from ..pipeline.dot_to_dot.processor import process as dot_to_dot
     from ..pipeline.video.processor import generate as make_video
+    from ..teaching.mediums import get_medium
+    from ..teaching.lesson import build_lesson_plan
+    from ..teaching.pdf_book import build_tutorial_pdf
 
     # Resolve backward-compat alias
     if n_colors and not palette_size:
@@ -212,7 +214,6 @@ def run_pipeline(
             img=img,
             out_dir=out_dir,
             palette_size=palette_size,
-            detail_level=detail_level,
             value_zones=value_zones,
             medium=medium,
             fg_mask=fg_mask,
@@ -245,7 +246,7 @@ def run_pipeline(
         img=img,
         medium=medium,
         palette_size=palette_size,
-        detail_level=detail_level,
+        initial_view_level=initial_view_level,
         value_zones=value_zones,
         pages=pages,
         video_path=None,   # not yet available
@@ -255,19 +256,36 @@ def run_pipeline(
         errors=errors,
         ref_suffix=suffix,
         region_complexity=region_complexity,
+        texture_detail=texture_detail,
+        background_detail=background_detail,
     )
     prelim_manifest["status"] = "analysis_ready"
     manifest_path.write_text(json.dumps(prelim_manifest, indent=2))
 
-    # ── Step 10: Video ────────────────────────────────────────────────────────
+    # ── Build medium_cfg + lesson_plan once (absolute paths) — shared by
+    #    both the video (chapter labels/images) and the PDF (tutorial book) ──
+    medium_cfg = get_medium(medium)
+    classic_pages = [p for p in pages if not _is_hierarchical_asset(p) and p]
+    lesson_plan_abs = build_lesson_plan(
+        medium_cfg=medium_cfg,
+        medium=medium,
+        detail_levels=hier.get("detail_levels", {}),
+        outline_composites=hier.get("outline_composites", {}),
+        value_zones_map=hier.get("value_zones_path"),
+        classic_pages=classic_pages,
+    )
+
+    # ── Step 10: Video — chapters follow the medium's real teaching stages ────
     progress("rendering_extras")
     video_path = None
+    video_chapters: list[dict] = []
     if la_result and notan_result and cbn_result:
         progress("video")
         try:
             t0 = time.perf_counter()
             video_path = str(out_dir / "tutorial.mp4")
-            make_video(
+            stage_images = _resolve_stage_images(lesson_plan_abs)
+            video_result = make_video(
                 reference=img,
                 line_art=la_result,
                 notan=notan_result,
@@ -275,7 +293,10 @@ def run_pipeline(
                 output_path=video_path,
                 fps=24,
                 out_w=1080,
+                medium_stages=medium_cfg.get("stages", []),
+                stage_images=stage_images,
             )
+            video_chapters = video_result.get("chapters", [])
             timings["video"] = round(time.perf_counter() - t0, 2)
         except Exception:
             tb = traceback.format_exc()
@@ -283,25 +304,29 @@ def run_pipeline(
             log.warning("Video generation failed:\n%s", tb)
             video_path = None
 
-    # ── Step 11: PDF ──────────────────────────────────────────────────────────
+    # ── Step 11: PDF — tutorial book built around the lesson_plan ──────────────
     progress("pdf")
     pdf_path = None
-    # Filter pages to only classic analysis outputs (not hierarchical detail levels)
-    classic_pages = [p for p in pages if not _is_hierarchical_asset(p)]
-    if classic_pages:
-        try:
-            t0 = time.perf_counter()
-            pdf = FPDF(orientation="P", unit="mm", format="A4")
-            for p in classic_pages:
-                pdf.add_page()
-                pdf.image(p, x=10, y=10, w=190)
-            pdf_path = str(out_dir / "tutorial_book.pdf")
-            pdf.output(pdf_path)
-            timings["pdf"] = round(time.perf_counter() - t0, 2)
-        except Exception:
-            tb = traceback.format_exc()
-            errors["pdf"] = tb
-            log.warning("PDF assembly failed:\n%s", tb)
+    try:
+        t0 = time.perf_counter()
+        pdf_path = str(out_dir / "tutorial_book.pdf")
+        build_tutorial_pdf(
+            out_path=pdf_path,
+            reference_path=ref_path,
+            medium=medium,
+            medium_cfg=medium_cfg,
+            detail_levels=hier.get("detail_levels", {}),
+            lesson_plan=lesson_plan_abs,
+            palette=hier.get("palette", []),
+            value_zone_list=hier.get("value_zone_list", []),
+            classic_pages=classic_pages,
+        )
+        timings["pdf"] = round(time.perf_counter() - t0, 2)
+    except Exception:
+        tb = traceback.format_exc()
+        errors["pdf"] = tb
+        log.warning("PDF assembly failed:\n%s", tb)
+        pdf_path = None
 
     # ── Step 12: Manifest ─────────────────────────────────────────────────────
     progress("manifest")
@@ -310,7 +335,7 @@ def run_pipeline(
         img=img,
         medium=medium,
         palette_size=palette_size,
-        detail_level=detail_level,
+        initial_view_level=initial_view_level,
         value_zones=value_zones,
         pages=pages,
         video_path=video_path,
@@ -320,6 +345,9 @@ def run_pipeline(
         errors=errors,
         ref_suffix=suffix,
         region_complexity=region_complexity,
+        texture_detail=texture_detail,
+        background_detail=background_detail,
+        video_chapters=video_chapters,
     )
     manifest_path.write_text(json.dumps(manifest, indent=2))
 
@@ -338,6 +366,44 @@ def run_pipeline(
 def _is_hierarchical_asset(path: str) -> bool:
     p = Path(path)
     return p.parent.name.startswith("level_") or "level_" in p.stem
+
+
+# Which lesson_plan asset type each video phase wants as its overlay image —
+# phase 2 needs an outline-style image (its dark pixels become the line mask),
+# phases 3/4/6 need a value or colour mass image.
+_STAGE_IMAGE_PREFERENCE = {
+    2: "outlines",
+    3: "values",
+    4: "colours",
+    6: "colours",
+}
+
+
+def _resolve_stage_images(lesson_plan_abs: list[dict]) -> dict:
+    """
+    Pick one real, already-generated image per relevant stage order from the
+    lesson_plan's resolved assets, for the video to show instead of its
+    generic classic-pipeline fallback. Missing/unopenable assets are simply
+    left out — generate() falls back to its default image in that case.
+    """
+    from PIL import Image
+
+    images: dict[int, "Image.Image"] = {}
+    for step in lesson_plan_abs:
+        order = step.get("order")
+        if order not in _STAGE_IMAGE_PREFERENCE:
+            continue
+        assets = step.get("assets", {})
+        if not assets:
+            continue
+        preferred = _STAGE_IMAGE_PREFERENCE[order]
+        chosen = next((p for k, p in assets.items() if preferred in k), next(iter(assets.values())))
+        if chosen and Path(chosen).exists():
+            try:
+                images[order] = Image.open(chosen).convert("RGB")
+            except Exception:
+                log.warning("_resolve_stage_images: could not open %r for stage order %d", chosen, order)
+    return images
 
 
 def _normalize_detail_levels(detail_levels: dict) -> dict:
@@ -361,7 +427,7 @@ def _build_manifest(
     img,
     medium: str,
     palette_size: int,
-    detail_level: int,
+    initial_view_level: int,
     value_zones: int,
     pages: list[str],
     video_path: str | None,
@@ -371,6 +437,9 @@ def _build_manifest(
     errors: dict,
     ref_suffix: str = ".jpg",
     region_complexity: int = 3,
+    texture_detail: bool = True,
+    background_detail: bool = False,
+    video_chapters: list[dict] | None = None,
 ) -> dict:
     w, h = img.size
 
@@ -380,32 +449,52 @@ def _build_manifest(
     raw_edge_maps = hier.get("edge_maps", {})
     edge_maps_rel = {name: rel_to_outputs(p) for name, p in raw_edge_maps.items() if p}
 
+    # Global outline composites (non-level-filtered) — used by lesson_plan resolution
+    raw_outline_composites = hier.get("outline_composites", {})
+    outline_composites_rel = {name: rel_to_outputs(p) for name, p in raw_outline_composites.items() if p}
+
+    value_zones_map = rel_to_outputs(hier.get("value_zones_path"))
+
     manifest = {
         "job_id": job_id,
         "input": {
-            "medium":            medium,
-            "palette_size":      palette_size,
-            "detail_level":      detail_level,
-            "value_zones":       value_zones,
-            "region_complexity": region_complexity,
+            "medium":              medium,
+            "palette_size":        palette_size,
+            "initial_view_level":  initial_view_level,
+            "value_zones":         value_zones,
+            "region_complexity":   region_complexity,
+            "texture_detail":      texture_detail,
+            "background_detail":   background_detail,
         },
         "image": {"width": w, "height": h},
         "reference": f"{job_id}/reference{ref_suffix}",
         "pages": classic_pages,
         "detail_levels": _normalize_detail_levels(hier.get("detail_levels", {})),  # A1
         "edge_maps":      edge_maps_rel,    # A4: individual sublayer maps
+        "outline_composites": outline_composites_rel,
+        "value_zones_map": value_zones_map,
         "palette":        hier.get("palette", []),
         "colour_families":hier.get("colour_families", []),
         "value_zones":    hier.get("value_zone_list", []),
         "video":  rel_to_outputs(video_path),
+        "video_chapters": video_chapters or [],
         "pdf":    rel_to_outputs(pdf_path),
         "timings": timings,
         "errors": {k: v[:300] for k, v in errors.items()},  # truncate for JSON
     }
 
     from ..teaching.mediums import get_medium as _get_medium_for_manifest
+    from ..teaching.lesson import build_lesson_plan
     medium_cfg = _get_medium_for_manifest(medium)
     manifest["teaching_stages"]       = medium_cfg.get("stages", [])
     manifest["teaching_instructions"] = medium_cfg.get("instructions", {})
+    manifest["lesson_plan"] = build_lesson_plan(
+        medium_cfg=medium_cfg,
+        medium=medium,
+        detail_levels=manifest["detail_levels"],
+        outline_composites=outline_composites_rel,
+        value_zones_map=value_zones_map,
+        classic_pages=classic_pages,
+    )
 
     return manifest

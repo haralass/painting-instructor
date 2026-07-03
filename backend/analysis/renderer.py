@@ -7,6 +7,7 @@ from PIL import Image
 
 from .models import DetailLevel, Region, ColourFamily, ValueZone, MediumStrategy
 from .preprocessing import ImageCache
+from .edges import LEVEL_EDGE_TYPES
 
 _LEVEL_LABELS = {
     1: "Foundation",
@@ -64,6 +65,7 @@ def render_detail_levels(
     edges=None,  # list[Edge] | None — for edge_ids per level
     medium_strategy: MediumStrategy | None = None,
     edge_maps: dict[str, np.ndarray] | None = None,  # A9: individual edge maps for per-medium processing
+    level_edge_maps: dict[int, dict[str, np.ndarray]] | None = None,  # level-aware outline source
 ) -> dict[str, DetailLevel]:
     """
     Render 5 detail levels to disk and return a DetailLevel dict keyed by str level.
@@ -101,10 +103,8 @@ def render_detail_levels(
                         scale_key = k
                         break
             # Filter regions by scale for this level
-            active_regions = [
-                r for r in regions
-                if r.scale == scale_key and r.importance >= importance_thresh
-            ]
+            all_scale_regions = [r for r in regions if r.scale == scale_key]
+            active_regions = [r for r in all_scale_regions if r.importance >= importance_thresh]
         else:
             scale_priority = ["micro", "fine", "medium", "coarse"]
             label_map = None
@@ -114,27 +114,39 @@ def render_detail_levels(
                     label_map = label_maps[sc]
                     scale_key = sc
                     break
+            all_scale_regions = list(regions)
             active_regions = [r for r in regions if r.importance >= importance_thresh]
 
         region_ids = [r.id for r in active_regions]
 
+        # Value/colour masses must cover the level's own coarse partition fully —
+        # using only importance-filtered active_regions would leave low-importance
+        # regions unfilled and let full pixel-resolution zone_map noise show through,
+        # defeating the point of a simplified Level 1. active_regions (importance
+        # filtered) is still used for region_ids / region overlay highlighting below.
+        mass_regions = all_scale_regions if all_scale_regions else active_regions
+
         # ── Edge IDs for this level (complexity filter) ────────────────────
-        _LEVEL_EDGE_TYPES = {
-            1: {"primary"},
-            2: {"primary"},
-            3: {"primary", "secondary"},
-            4: {"primary", "secondary", "decorative"},
-            5: {"primary", "secondary", "decorative", "texture"},
-        }
-        allowed_types = _LEVEL_EDGE_TYPES[lvl]
+        allowed_types = LEVEL_EDGE_TYPES[lvl]
         edge_ids: list[int] = []
         if edges is not None:
             edge_ids = [e.id for e in edges if e.type in allowed_types]
 
-        # ── A9: Apply medium strategy to individual edge maps then recomposite ──
-        if edge_maps is not None and medium_strategy is not None:
+        # ── Outlines: prefer this level's own ancestor-filtered edge set ────
+        # level_edge_maps[lvl] already contains only edges that are (a) the
+        # right types for this level and (b) still boundaries at this level's
+        # own region resolution (see pipeline.py's filter_edges_for_level) —
+        # so Level 1 is genuinely coarser than Level 5, not just a type mask
+        # over one fixed-scale edge set.
+        if level_edge_maps is not None and lvl in level_edge_maps:
+            lvl_maps = level_edge_maps[lvl]
+            if medium_strategy is not None:
+                lvl_maps = _apply_medium_to_edge_maps(lvl_maps, medium_strategy)
+            outline_arr = _composite_all_edge_maps(lvl_maps)
+        elif edge_maps is not None and medium_strategy is not None:
             styled = _apply_medium_to_edge_maps(edge_maps, medium_strategy)
             effective_outlines = _composite_edge_maps(styled)
+            outline_arr = effective_outlines.get(outline_key, np.full((H, W), 255, dtype=np.uint8))
         elif medium_strategy is not None:
             # Fall back: apply strategy to existing composites
             effective_outlines = dict(outline_composites)
@@ -150,24 +162,27 @@ def render_detail_levels(
                 if sec is not None:
                     blended = np.clip(sec.astype(np.int32) + 60, 0, 255).astype(np.uint8)
                     effective_outlines["outlines_primary_secondary"] = blended
+            outline_arr = effective_outlines.get(outline_key, np.full((H, W), 255, dtype=np.uint8))
         else:
-            effective_outlines = outline_composites
+            outline_arr = outline_composites.get(outline_key, np.full((H, W), 255, dtype=np.uint8))
 
         # ── Outlines PNG ───────────────────────────────────────────────────
-        outline_arr = effective_outlines.get(outline_key, np.full((H, W), 255, dtype=np.uint8))
         outline_pil = Image.fromarray(outline_arr)
         outline_path = str(out_dir / f"level_{lvl}_outlines.png")
         outline_pil.save(outline_path)
 
         # ── Value map PNG ──────────────────────────────────────────────────
-        value_arr  = _render_value_lut(zone_map, value_zones, active_regions, label_maps, H, W,
+        # Uses mass_regions (the level's full own-scale partition), not the
+        # importance-filtered active_regions, so every pixel gets this level's
+        # own coarse mass instead of leaking full-resolution zone_map detail.
+        value_arr  = _render_value_lut(zone_map, value_zones, mass_regions, label_maps, H, W,
                                        medium_strategy=medium_strategy)
         value_pil  = Image.fromarray(value_arr)
         value_path = str(out_dir / f"level_{lvl}_values.png")
         value_pil.save(value_path)
 
         # ── Flat colour PNG ────────────────────────────────────────────────
-        colour_arr  = _render_colour_lut(active_regions, families, label_maps, H, W, lvl,
+        colour_arr  = _render_colour_lut(mass_regions, families, label_maps, H, W, lvl,
                                          medium_strategy=medium_strategy,
                                          zones=value_zones)
         colour_pil  = Image.fromarray(colour_arr)
@@ -436,3 +451,19 @@ def _composite_edge_maps(styled: dict[str, np.ndarray]) -> dict[str, np.ndarray]
         "outlines_detailed":          _comp("primary", "secondary", "decorative"),
         "outlines_full":              _comp("primary", "secondary", "decorative", "texture"),
     }
+
+
+def _composite_all_edge_maps(maps: dict[str, np.ndarray]) -> np.ndarray:
+    """
+    Composite every type map present into a single white-bg/black-line image.
+    Used for level-aware outlines, where the input maps are already filtered
+    to exactly the types+edges relevant for that level, so no further
+    type-subset selection is needed.
+    """
+    if not maps:
+        return None
+    base = np.zeros_like(next(iter(maps.values())))
+    for m in maps.values():
+        if m is not None:
+            base = np.maximum(base, m)
+    return 255 - base

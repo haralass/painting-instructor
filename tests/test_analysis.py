@@ -7,6 +7,7 @@ Run with:
     pytest tests/test_analysis.py -v
 """
 from __future__ import annotations
+from pathlib import Path
 import numpy as np
 import pytest
 from PIL import Image
@@ -158,7 +159,7 @@ class TestColourTemperature:
 # ── Region hierarchy tests ────────────────────────────────────────────────────
 
 class TestRegionHierarchy:
-    def _run(self, img, palette_size=6, detail_level=3, value_zones=3):
+    def _run(self, img, palette_size=6, region_complexity=3, value_zones=3):
         from backend.analysis.preprocessing import prepare
         from backend.analysis.colours import extract_colour_families
         from backend.analysis.regions import build_region_hierarchy
@@ -167,10 +168,10 @@ class TestRegionHierarchy:
         label_maps, regions = build_region_hierarchy(
             cache=cache,
             palette_size=palette_size,
-            detail_level=detail_level,
             n_value_zones=value_zones,
             value_colour_families=colour_internal,
             seed=0,
+            region_complexity=region_complexity,
         )
         return label_maps, regions
 
@@ -182,23 +183,23 @@ class TestRegionHierarchy:
     def test_palette_count_independent_of_region_count(self):
         """palette_size and region count must be independent parameters."""
         img = _flat_colour_image([(200,50,50), (50,200,50), (50,50,200)])
-        # With palette_size=3 and detail_level=5 we should still get more regions than 3
-        _, regions_d5 = self._run(img, palette_size=3, detail_level=5)
-        _, regions_d1 = self._run(img, palette_size=3, detail_level=1)
-        # Regions at detail level 5 ≥ regions at level 1
+        # With palette_size=3 and region_complexity=5 we should still get more regions than 3
+        _, regions_d5 = self._run(img, palette_size=3, region_complexity=5)
+        _, regions_d1 = self._run(img, palette_size=3, region_complexity=1)
+        # Regions at complexity 5 ≥ regions at complexity 1
         assert len(regions_d5) >= len(regions_d1), \
-            "More detail levels should produce at least as many regions"
+            "Higher region_complexity should produce at least as many regions"
 
     def test_two_areas_same_colour_remain_separate_regions(self):
         """Two spatially separate red areas should be separate regions."""
         img = _two_region_same_colour()
-        _, regions = self._run(img, palette_size=6, detail_level=3)
+        _, regions = self._run(img, palette_size=6, region_complexity=3)
         assert len(regions) >= 2, "Separate spatial regions must not be merged just because colours match"
 
     def test_all_regions_have_valid_parent_at_fine_scale(self):
         """Every non-coarse region must have a parent_id or be parentless at coarse."""
         img = _flat_colour_image([(200,50,50), (50,200,50), (50,50,200)])
-        _, regions = self._run(img, detail_level=5)
+        _, regions = self._run(img, region_complexity=5)
         # All parent_ids that are set should be non-negative integers
         for r in regions:
             if r.parent_id is not None:
@@ -377,7 +378,7 @@ class TestRegionIDMapping:
         from backend.analysis.regions import build_region_hierarchy
         from backend.analysis.colours import extract_colour_families
         _, _, internal = extract_colour_families(cache, palette_size=6)
-        label_maps, regions = build_region_hierarchy(cache, 6, 3, 3, internal)
+        label_maps, regions = build_region_hierarchy(cache, 6, 3, internal)
         for r in regions:
             lm = label_maps.get(r.scale)
             assert lm is not None, f"Region {r.id} has unknown scale {r.scale!r}"
@@ -392,7 +393,7 @@ class TestRegionIDMapping:
         img = Image.fromarray(np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8))
         cache = _prepare(img)
         _, _, internal = extract_colour_families(cache, 6)
-        _, regions = build_region_hierarchy(cache, 6, 3, 3, internal)
+        _, regions = build_region_hierarchy(cache, 6, 3, internal)
         region_ids = {r.id for r in regions}
         for r in regions:
             if r.parent_id is not None:
@@ -406,7 +407,7 @@ class TestRegionIDMapping:
         img = Image.fromarray(np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8))
         cache = _prepare(img)
         _, _, internal = extract_colour_families(cache, 6)
-        _, regions = build_region_hierarchy(cache, 6, 3, 3, internal)
+        _, regions = build_region_hierarchy(cache, 6, 3, internal)
         parent_map = {r.id: r.parent_id for r in regions}
         for start in parent_map:
             visited = set()
@@ -422,7 +423,7 @@ class TestRegionIDMapping:
         img = Image.fromarray(np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8))
         cache = _prepare(img)
         _, _, internal = extract_colour_families(cache, 6)
-        _, regions = build_region_hierarchy(cache, 6, 3, 3, internal)
+        _, regions = build_region_hierarchy(cache, 6, 3, internal)
         l1 = [r for r in regions if r.scale == "l1"]
         l5 = [r for r in regions if r.scale == "l5"]
         assert len(l1) < len(l5), f"Level 1 ({len(l1)}) not fewer than Level 5 ({len(l5)})"
@@ -466,7 +467,7 @@ class TestEdgeRegionContext:
         img = Image.fromarray(np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8))
         cache = _prepare(img)
         _, _, internal = extract_colour_families(cache, 6)
-        label_maps, regions = build_region_hierarchy(cache, 6, 3, 3, internal)
+        label_maps, regions = build_region_hierarchy(cache, 6, 3, internal)
         lm = label_maps.get("l3")
         if lm is None:
             lm = list(label_maps.values())[-1]
@@ -495,7 +496,6 @@ class TestReferenceImage:
                 img=img,
                 out_dir=out_dir,
                 palette_size=6,
-                detail_level=2,
                 value_zones=3,
                 medium="oil",
             )
@@ -517,7 +517,6 @@ class TestCriticalFailure:
                     img=Image.fromarray(np.zeros((64, 64, 3), dtype=np.uint8)),
                     out_dir="/tmp/test_fail_pipeline",
                     palette_size=6,
-                    detail_level=3,
                     value_zones=3,
                     medium="oil",
                 )
@@ -545,7 +544,6 @@ def test_pipeline_edge_map_not_none():
             img=img,
             out_dir=Path('/tmp/test_edge_pipeline'),
             palette_size=6,
-            detail_level=3,
             value_zones=3,
             medium='oil',
         )
@@ -562,7 +560,7 @@ class TestEdgeRegionIDMapping:
         img = Image.fromarray(np.random.default_rng(7).integers(0, 255, (64, 64, 3), dtype=np.uint8))
         cache = prepare(img)
         _, _, internal = extract_colour_families(cache, 6)
-        return build_region_hierarchy(cache, 6, 3, 3, internal), cache
+        return build_region_hierarchy(cache, 6, 3, internal), cache
 
     def test_edge_region_ids_valid(self):
         from backend.analysis.edges import extract_edge_hierarchy
@@ -643,8 +641,8 @@ def test_palette_size_does_not_control_region_count():
     _, _, internal6  = extract_colour_families(cache, palette_size=6)
     _, _, internal20 = extract_colour_families(cache, palette_size=20)
 
-    lmaps6,  regs6  = build_region_hierarchy(cache, 6,  3, 3, internal6)
-    lmaps20, regs20 = build_region_hierarchy(cache, 20, 3, 3, internal20)
+    lmaps6,  regs6  = build_region_hierarchy(cache, 6, 3, internal6)
+    lmaps20, regs20 = build_region_hierarchy(cache, 20, 3, internal20)
 
     for lvl in ["l1", "l2", "l3", "l4", "l5"]:
         count6  = len([r for r in regs6  if r.scale == lvl])
@@ -668,6 +666,126 @@ class TestValueZonesExtra:
             assert (zone_map == z.id).any(), f"Zone {z.id} has zero pixels"
 
 
+class TestLessonPlanAndPdfBook:
+    """The lesson_plan resolver and PDF book must be built from real,
+    already-generated assets — every medium's analysis_layers must resolve,
+    and the resulting PDF must actually contain the lesson content."""
+
+    def _hier_and_classic(self, tmp_path, medium="oil"):
+        from backend.analysis.pipeline import run_hierarchical_analysis
+        img = Image.fromarray(np.random.default_rng(7).integers(0, 255, (100, 140, 3), dtype=np.uint8))
+        out_dir = tmp_path / medium
+        hier = run_hierarchical_analysis(
+            img=img, out_dir=out_dir, palette_size=8, value_zones=5, medium=medium,
+        )
+        classic_pages = []
+        for name in ("color_temperature", "color_by_number", "notan", "color_palette",
+                     "light_direction", "dot_to_dot", "line_art"):
+            p = out_dir / f"{name}.png"
+            img.save(p)
+            classic_pages.append(str(p))
+        return img, out_dir, hier, classic_pages
+
+    def test_every_medium_lesson_plan_fully_resolves(self, tmp_path):
+        from backend.teaching.mediums import MEDIUMS, get_medium
+        from backend.teaching.lesson import build_lesson_plan
+
+        for medium in MEDIUMS:
+            _, _, hier, classic_pages = self._hier_and_classic(tmp_path, medium)
+            medium_cfg = get_medium(medium)
+            lesson_plan = build_lesson_plan(
+                medium_cfg=medium_cfg, medium=medium,
+                detail_levels=hier["detail_levels"],
+                outline_composites=hier["outline_composites"],
+                value_zones_map=hier["value_zones_path"],
+                classic_pages=classic_pages,
+            )
+            total_layers   = sum(len(s["analysis_layers"]) for s in medium_cfg["stages"])
+            total_resolved = sum(len(s["assets"]) for s in lesson_plan)
+            assert total_resolved == total_layers, (
+                f"{medium}: only {total_resolved}/{total_layers} analysis_layers resolved to real assets"
+            )
+            for step in lesson_plan:
+                for path in step["assets"].values():
+                    assert Path(path).exists(), f"{medium} step {step['name']!r} references missing file {path}"
+
+    def test_pdf_book_contains_lesson_pages(self, tmp_path):
+        from backend.teaching.mediums import get_medium
+        from backend.teaching.lesson import build_lesson_plan
+        from backend.teaching.pdf_book import build_tutorial_pdf
+        from pypdf import PdfReader
+
+        img, out_dir, hier, classic_pages = self._hier_and_classic(tmp_path, "oil")
+        ref_path = out_dir / "reference.png"
+        img.save(ref_path)
+        medium_cfg = get_medium("oil")
+        lesson_plan = build_lesson_plan(
+            medium_cfg=medium_cfg, medium="oil",
+            detail_levels=hier["detail_levels"], outline_composites=hier["outline_composites"],
+            value_zones_map=hier["value_zones_path"], classic_pages=classic_pages,
+        )
+        pdf_path = out_dir / "tutorial_book.pdf"
+        build_tutorial_pdf(
+            out_path=str(pdf_path), reference_path=str(ref_path), medium="oil",
+            medium_cfg=medium_cfg, detail_levels=hier["detail_levels"], lesson_plan=lesson_plan,
+            palette=hier["palette"], value_zone_list=hier["value_zone_list"], classic_pages=classic_pages,
+        )
+        assert pdf_path.exists()
+        reader = PdfReader(str(pdf_path))
+        # Cover + palette + value zones + 5 levels + stage intro + 6 stages + appendix intro + 7 classic pages
+        assert len(reader.pages) >= 1 + 5 + len(medium_cfg["stages"])
+        full_text = " ".join(page.extract_text() or "" for page in reader.pages)
+        assert "Oil Paint" in full_text or "oil" in full_text.lower()
+        for stage in medium_cfg["stages"]:
+            assert stage["name"] in full_text, f"Stage {stage['name']!r} text missing from PDF"
+
+
+class TestVideoChapters:
+    """The tutorial video must follow the medium's real teaching stages —
+    chapter labels and, where resolvable, the visual content per phase."""
+
+    def test_stage_images_resolve_for_expected_orders(self, tmp_path):
+        from backend.analysis.pipeline import run_hierarchical_analysis
+        from backend.teaching.mediums import get_medium
+        from backend.teaching.lesson import build_lesson_plan
+        from backend.workers.tasks import _resolve_stage_images
+
+        img = Image.fromarray(np.random.default_rng(9).integers(0, 255, (80, 100, 3), dtype=np.uint8))
+        out_dir = tmp_path / "video_stage_images"
+        hier = run_hierarchical_analysis(img=img, out_dir=out_dir, palette_size=8, value_zones=5, medium="oil")
+        medium_cfg = get_medium("oil")
+        lesson_plan = build_lesson_plan(
+            medium_cfg=medium_cfg, medium="oil",
+            detail_levels=hier["detail_levels"], outline_composites=hier["outline_composites"],
+            value_zones_map=hier["value_zones_path"], classic_pages=[],
+        )
+        stage_images = _resolve_stage_images(lesson_plan)
+        assert set(stage_images.keys()) == {2, 3, 4, 6}, (
+            f"Expected stage images for orders 2,3,4,6, got {sorted(stage_images.keys())}"
+        )
+
+    def test_generate_chapters_use_real_stage_names(self, tmp_path):
+        from backend.pipeline.video.processor import generate as make_video
+        from backend.teaching.mediums import get_medium
+
+        img = Image.fromarray(np.random.default_rng(4).integers(0, 255, (60, 80, 3), dtype=np.uint8))
+        out_path = str(tmp_path / "chapters.mp4")
+        medium_cfg = get_medium("charcoal")
+        result = make_video(
+            reference=img, line_art=img, notan=img, color_blocking=img,
+            output_path=out_path, fps=8, out_w=120,
+            medium_stages=medium_cfg["stages"],
+        )
+        assert Path(out_path).exists()
+        chapters = result["chapters"]
+        names = [c["name"] for c in chapters]
+        assert any("Lay-in with vine charcoal" in n for n in names), (
+            f"Charcoal stage 1 name not found in video chapters: {names}"
+        )
+        starts = [c["start_sec"] for c in chapters]
+        assert starts == sorted(starts), "Chapter start_sec must be monotonically increasing"
+
+
 class TestMediumRendering:
     def _run_for_medium(self, medium: str, out_dir):
         from pathlib import Path
@@ -677,7 +795,6 @@ class TestMediumRendering:
             img=img,
             out_dir=Path(out_dir) / medium,
             palette_size=6,
-            detail_level=2,
             value_zones=3,
             medium=medium,
         )
@@ -720,7 +837,6 @@ class TestMediumRendering:
             img=img,
             out_dir=Path(tmp_path) / "wc",
             palette_size=4,
-            detail_level=2,
             value_zones=3,
             medium="watercolor",
         )
@@ -735,6 +851,120 @@ class TestMediumRendering:
         assert mean_upper > 200, f"Watercolour light region too dark: mean={mean_upper:.1f}"
 
 
+class TestLevelAwareValueMasses:
+    """Level 1 must genuinely simplify — value/colour masses come from that
+    level's own coarse region partition, not a pixel-level zone_map leaking
+    through for regions filtered out by the importance threshold."""
+
+    def _run(self, tmp_path):
+        from backend.analysis.pipeline import run_hierarchical_analysis
+        img = _contour_with_texture()
+        return run_hierarchical_analysis(
+            img=img,
+            out_dir=tmp_path / "level_masses",
+            palette_size=8,
+            value_zones=5,
+            medium="oil",
+        )
+
+    def test_level_1_values_simpler_than_level_5(self, tmp_path):
+        result = self._run(tmp_path)
+        l1_path = result["detail_levels"]["1"]["values"]
+        l5_path = result["detail_levels"]["5"]["values"]
+        l1_arr = np.array(Image.open(l1_path).convert("L"))
+        l5_arr = np.array(Image.open(l5_path).convert("L"))
+        n_unique_l1 = len(np.unique(l1_arr))
+        n_unique_l5 = len(np.unique(l5_arr))
+        assert n_unique_l1 <= n_unique_l5, (
+            f"Level 1 values should be at least as simple as Level 5 "
+            f"(L1 uniques={n_unique_l1}, L5 uniques={n_unique_l5})"
+        )
+
+    def test_level_1_values_fully_covered_by_own_scale(self, tmp_path):
+        """No pixel in Level 1's value map should be the raw zone_map default
+        fallback grey (128) unless that value genuinely is a zone's grey —
+        i.e. every pixel must be assigned via the level's own regions."""
+        from backend.analysis.regions import build_region_hierarchy
+        from backend.analysis.preprocessing import prepare
+        from backend.analysis.colours import extract_colour_families
+
+        img = _contour_with_texture()
+        cache = prepare(img)
+        _, _, colour_internal = extract_colour_families(cache, palette_size=8)
+        label_maps, regions = build_region_hierarchy(
+            cache=cache, palette_size=8, n_value_zones=5,
+            value_colour_families=colour_internal, seed=0, region_complexity=3,
+        )
+        l1_regions = [r for r in regions if r.scale == "l1"]
+        l1_label_map = label_maps["l1"]
+        covered_labels = {r.source_label for r in l1_regions}
+        all_labels = set(np.unique(l1_label_map).tolist())
+        assert all_labels <= covered_labels, (
+            "Every label in the l1 label map must have a corresponding Region "
+            "so value/colour rendering can cover the whole image at that level"
+        )
+
+    def test_level_1_outlines_not_more_complex_than_level_5(self, tmp_path):
+        """Level 1 outlines must not have more edge pixels than Level 5 —
+        interior boundaries that vanish at coarse resolution must actually
+        be dropped, not just type-filtered from a single fixed-scale map."""
+        result = self._run(tmp_path)
+        l1_arr = np.array(Image.open(result["detail_levels"]["1"]["outlines"]).convert("L"))
+        l5_arr = np.array(Image.open(result["detail_levels"]["5"]["outlines"]).convert("L"))
+        n_edge_l1 = int((l1_arr < 128).sum())
+        n_edge_l5 = int((l5_arr < 128).sum())
+        assert n_edge_l1 <= n_edge_l5, (
+            f"Level 1 outline pixels ({n_edge_l1}) exceed Level 5 ({n_edge_l5}) — "
+            "outlines are not simplifying with the level"
+        )
+
+    def test_ancestor_filtering_drops_interior_edges(self):
+        """An edge whose two sides share the same l1 ancestor must be
+        dropped when filtering for level 1, but kept for level 5 (identity)."""
+        from backend.analysis.edges import build_region_ancestor_chain, filter_edges_for_level
+        from backend.analysis.models import Edge, Region
+
+        # Two l5 regions (10, 11) both roll up into the same l1 region (0);
+        # a third l5 region (12) rolls up into a different l1 region (1).
+        r_l1_a = Region(id=0, source_label=0, scale="l1", level=0, area=100,
+                         centroid=(0, 0), bbox=(0, 0, 1, 1), mean_lab=(0, 0, 0),
+                         mean_rgb=(0, 0, 0), value_zone=0, colour_family_id=0,
+                         importance=1.0, texture_score=0.0)
+        r_l1_b = Region(id=1, source_label=1, scale="l1", level=0, area=100,
+                         centroid=(0, 0), bbox=(0, 0, 1, 1), mean_lab=(0, 0, 0),
+                         mean_rgb=(0, 0, 0), value_zone=0, colour_family_id=0,
+                         importance=1.0, texture_score=0.0)
+        r_l5_10 = Region(id=10, source_label=10, scale="l5", parent_id=0, level=4, area=10,
+                          centroid=(0, 0), bbox=(0, 0, 1, 1), mean_lab=(0, 0, 0),
+                          mean_rgb=(0, 0, 0), value_zone=0, colour_family_id=0,
+                          importance=0.5, texture_score=0.0)
+        r_l5_11 = Region(id=11, source_label=11, scale="l5", parent_id=0, level=4, area=10,
+                          centroid=(0, 0), bbox=(0, 0, 1, 1), mean_lab=(0, 0, 0),
+                          mean_rgb=(0, 0, 0), value_zone=0, colour_family_id=0,
+                          importance=0.5, texture_score=0.0)
+        r_l5_12 = Region(id=12, source_label=12, scale="l5", parent_id=1, level=4, area=10,
+                          centroid=(0, 0), bbox=(0, 0, 1, 1), mean_lab=(0, 0, 0),
+                          mean_rgb=(0, 0, 0), value_zone=0, colour_family_id=0,
+                          importance=0.5, texture_score=0.0)
+        regions = [r_l1_a, r_l1_b, r_l5_10, r_l5_11, r_l5_12]
+
+        interior_edge  = Edge(id=0, region_a=10, region_b=11, type="primary",
+                              strength=1.0, hardness=1.0, importance=1.0, path=[[0, 0], [1, 1]])
+        boundary_edge  = Edge(id=1, region_a=10, region_b=12, type="primary",
+                              strength=1.0, hardness=1.0, importance=1.0, path=[[0, 0], [1, 1]])
+        edges = [interior_edge, boundary_edge]
+
+        chains = build_region_ancestor_chain(regions, "l5")
+
+        level5_kept = filter_edges_for_level(edges, 5, "l5", chains)
+        assert {e.id for e in level5_kept} == {0, 1}, "Level 5 must keep both edges (identity ancestor)"
+
+        level1_kept = filter_edges_for_level(edges, 1, "l1", chains)
+        assert {e.id for e in level1_kept} == {1}, (
+            "Level 1 must drop the interior edge (same l1 ancestor) and keep the real boundary"
+        )
+
+
 # ── A5: Real bounding boxes ───────────────────────────────────────────────────
 
 class TestRealBoundingBoxes:
@@ -746,7 +976,7 @@ class TestRealBoundingBoxes:
         from backend.analysis.regions import build_region_hierarchy
         cache = prepare(img)
         _, _, internal = extract_colour_families(cache, palette_size=6)
-        label_maps, regions = build_region_hierarchy(cache, 6, 3, 3, internal, seed=0)
+        label_maps, regions = build_region_hierarchy(cache, 6, 3, internal, seed=0)
         return cache, label_maps, regions
 
     def test_all_bboxes_within_image_bounds(self):
@@ -807,7 +1037,7 @@ class TestRegionComplexity:
         cache = prepare(img)
         _, _, internal = extract_colour_families(cache, palette_size=6)
         _, regions = build_region_hierarchy(
-            cache, 6, 3, 3, internal, seed=0,
+            cache, 6, 3, internal, seed=0,
             region_complexity=complexity,
         )
         return len([r for r in regions if r.scale == level])
@@ -839,7 +1069,7 @@ class TestRegionComplexity:
         cache = prepare(img)
         _, _, internal = extract_colour_families(cache, palette_size=4)
         for c in (1, 2, 3, 4, 5):
-            lmaps, regs = build_region_hierarchy(cache, 4, 3, 3, internal, seed=0, region_complexity=c)
+            lmaps, regs = build_region_hierarchy(cache, 4, 3, internal, seed=0, region_complexity=c)
             assert "l1" in lmaps and "l5" in lmaps, f"complexity={c}: missing level keys"
             assert len(regs) > 0, f"complexity={c}: no regions produced"
 

@@ -3,17 +3,25 @@ from __future__ import annotations
 Progressive painting tutorial video generator.
 
 Produces a time-lapse style video showing how to build up a painting from
-scratch, phase by phase — the way a real instructor would demonstrate:
+scratch, phase by phase — the way a real instructor would demonstrate. The
+six phases follow the same construction -> values -> colour -> edges ->
+detail sequence every medium's teaching stages already describe:
 
   Phase 0 — Reference photo (2s hold)
-  Phase 1 — Blank canvas
-  Phase 2 — Gesture / line art fades in   (outlines only)
-  Phase 3 — Value masses (Notan)           (shadow/midtone/light blocks)
-  Phase 4 — Color blocking                 (paint-by-number flat fills)
-  Phase 5 — Detail & edge refinement       (line art overlay re-applied)
+  Phase 1 — Ground / construction     (stage 1: toned ground, construction lines...)
+  Phase 2 — Lay-in / gesture          (stage 2: block-in, outlines)
+  Phase 3 — Value masses              (stage 3: value development)
+  Phase 4 — Colour blocking           (stage 4: colour modelling)
+  Phase 5 — Edge refinement & detail  (stages 5-6: edge control, final detail)
   Phase 6 — Final comparison (split: left=reference, right=painting)
 
-Each phase transition is animated so strokes/fills appear progressively.
+When `medium_stages` (a medium's ordered teaching stages) and `stage_images`
+(a resolved image per stage order, from the lesson_plan) are provided, each
+phase's on-screen title/subtitle and visual content come from that medium's
+real stage — otherwise it falls back to generic labels using the four
+classic assets, exactly as before. The wipe/fade/scan mechanics are
+unchanged either way; only what gets displayed and labelled changes.
+
 The video is MP4, default 1080px wide, 24 fps.
 """
 import numpy as np
@@ -54,12 +62,6 @@ def _label_frame(frame: np.ndarray, text: str, sub: str = "") -> np.ndarray:
     return np.array(img)
 
 
-def _build_notan_overlay(notan_arr: np.ndarray, canvas: np.ndarray,
-                         alpha: float = 0.75) -> np.ndarray:
-    """Blend notan value map over canvas at given alpha."""
-    return _lerp(canvas, notan_arr, alpha)
-
-
 def _horizontal_wipe(a: np.ndarray, b: np.ndarray, t: float) -> np.ndarray:
     """Wipe from left: left portion shows b, right shows a."""
     H, W = a.shape[:2]
@@ -83,9 +85,13 @@ def _vertical_scan(base: np.ndarray, overlay: np.ndarray, t: float) -> np.ndarra
     return out
 
 
-def _write_frames(writer: cv2.VideoWriter, frames: list[np.ndarray]) -> None:
-    for f in frames:
-        writer.write(cv2.cvtColor(f, cv2.COLOR_RGB2BGR))
+def _stage_label(stages: list[dict], order: int, fallback_name: str, fallback_desc: str) -> tuple[str, str]:
+    """Look up a medium's real stage name/description by order, or fall back
+    to the generic label if no medium stage data was supplied."""
+    stage = next((s for s in stages if s.get("order") == order), None)
+    if stage is None:
+        return fallback_name, fallback_desc
+    return f"Step {order} — {stage['name']}", stage.get("description", fallback_desc)
 
 
 def generate(
@@ -96,7 +102,9 @@ def generate(
     output_path: str,
     fps: int = FPS,
     out_w: int = OUT_W,
-) -> str:
+    medium_stages: list[dict] | None = None,
+    stage_images: dict[int, Image.Image] | None = None,
+) -> dict:
     """
     Generate progressive painting tutorial video.
 
@@ -108,10 +116,20 @@ def generate(
         output_path:    Destination .mp4 path.
         fps:            Frames per second (default 24).
         out_w:          Output video width in pixels (height maintains aspect).
+        medium_stages:  The selected medium's ordered teaching stages
+                        (get_medium(medium)["stages"]) — used for real
+                        on-screen labels instead of generic step text.
+        stage_images:   {stage_order: PIL.Image} — the lesson_plan's best
+                        resolved image per stage (e.g. that stage's own
+                        detail-level outlines/values), substituted for the
+                        generic classic asset in that phase when available.
 
     Returns:
-        output_path on success.
+        {"path": output_path, "chapters": [{"order", "name", "start_sec"}]}
     """
+    stages = medium_stages or []
+    stage_imgs = stage_images or {}
+
     # ── standardise sizes ─────────────────────────────────────────────────
     W_ref, H_ref = reference.size
     aspect = H_ref / W_ref
@@ -120,9 +138,11 @@ def generate(
     size = (W, H)
 
     ref_arr   = _to_rgb(reference, size)
-    la_arr    = _to_rgb(line_art,  size)    # black lines on white
-    notan_arr = _to_rgb(notan,     size)
-    color_arr = _to_rgb(color_blocking, size)
+    la_arr    = _to_rgb(stage_imgs.get(2, line_art), size)         # gesture/lay-in overlay
+    notan_arr = _to_rgb(stage_imgs.get(3, notan), size)            # value masses overlay
+    color_arr = _to_rgb(stage_imgs.get(4, color_blocking), size)   # colour blocking overlay
+    detail_src_img = stage_imgs.get(6, color_blocking)
+    detail_arr = _to_rgb(detail_src_img, size)                     # final detail overlay
 
     # Canvas starts white
     canvas    = np.ones((H, W, 3), dtype=np.uint8) * 245
@@ -144,66 +164,87 @@ def generate(
     hold_n = int(HOLD_SECS * fps)
     anim_n = int(FADE_SECS * fps)
 
+    frame_count = 0
+    chapters: list[dict] = []
+
+    def _write(frames: list[np.ndarray]) -> None:
+        nonlocal frame_count
+        for f in frames:
+            writer.write(cv2.cvtColor(f, cv2.COLOR_RGB2BGR))
+        frame_count += len(frames)
+
+    def _mark(order: int, name: str) -> None:
+        chapters.append({"order": order, "name": name, "start_sec": round(frame_count / fps, 2)})
+
     # ── Phase 0: Reference photo ──────────────────────────────────────────
+    _mark(0, "Reference Photo")
     f0 = _label_frame(ref_arr, "Reference Photo", "Study this before you pick up a brush")
-    _write_frames(writer, [f0] * hold_n)
+    _write([f0] * hold_n)
 
-    # ── Phase 1: Blank canvas (quick hold) ───────────────────────────────
+    # ── Phase 1: Ground / construction (quick hold) ──────────────────────
+    name1, desc1 = _stage_label(stages, 1, "Step 1 — Blank Canvas", "Start with a toned canvas (warm ivory)")
+    _mark(1, name1)
     for t in np.linspace(0, 1, max(1, fps // 2)):
-        _write_frames(writer, [_lerp(f0, _label_frame(canvas, "Step 1 — Blank Canvas", "Start with a toned canvas (warm ivory)"), t)])
-    f1 = _label_frame(canvas, "Step 1 — Blank Canvas", "Start with a toned canvas (warm ivory)")
-    _write_frames(writer, [f1] * (fps // 2))
+        _write([_lerp(f0, _label_frame(canvas, name1, desc1), t)])
+    f1 = _label_frame(canvas, name1, desc1)
+    _write([f1] * (fps // 2))
 
-    # ── Phase 2: Line art / gesture drawing (top-down scan) ──────────────
+    # ── Phase 2: Lay-in / gesture (top-down scan) ────────────────────────
+    name2, desc2 = _stage_label(stages, 2, "Step 2 — Gesture & Outlines", "Establish proportions and key edges first")
+    _mark(2, name2)
     canvas_with_lines = apply_lines(canvas)
     for i in range(anim_n):
         t = i / max(1, anim_n - 1)
         frame = _vertical_scan(canvas, canvas_with_lines, t)
-        frame = _label_frame(frame, "Step 2 — Gesture & Outlines",
-                             "Establish proportions and key edges first")
-        _write_frames(writer, [frame])
-    f2 = _label_frame(canvas_with_lines, "Step 2 — Gesture & Outlines",
-                      "Establish proportions and key edges first")
-    _write_frames(writer, [f2] * (fps // 2))
+        frame = _label_frame(frame, name2, desc2)
+        _write([frame])
+    f2 = _label_frame(canvas_with_lines, name2, desc2)
+    _write([f2] * (fps // 2))
 
-    # ── Phase 3: Value masses / Notan (horizontal wipe) ──────────────────
-    # Blend notan into the lined canvas
+    # ── Phase 3: Value masses (horizontal wipe) ──────────────────────────
+    name3, desc3 = _stage_label(stages, 3, "Step 3 — Value Masses (Notan)", "Block in shadows, midtones, lights — no colour yet")
+    _mark(3, name3)
     notan_on_canvas = apply_lines(notan_arr, line_alpha=0.6)
     for i in range(anim_n):
         t = i / max(1, anim_n - 1)
         frame = _horizontal_wipe(canvas_with_lines, notan_on_canvas, t)
-        frame = _label_frame(frame, "Step 3 — Value Masses (Notan)",
-                             "Block in shadows, midtones, lights — no colour yet")
-        _write_frames(writer, [frame])
-    f3 = _label_frame(notan_on_canvas, "Step 3 — Value Masses (Notan)",
-                      "Block in shadows, midtones, lights — no colour yet")
-    _write_frames(writer, [f3] * (fps // 2))
+        frame = _label_frame(frame, name3, desc3)
+        _write([frame])
+    f3 = _label_frame(notan_on_canvas, name3, desc3)
+    _write([f3] * (fps // 2))
 
     # ── Phase 4: Colour blocking (fade in over notan) ─────────────────────
+    name4, desc4 = _stage_label(stages, 4, "Step 4 — Colour Blocking", "Fill flat colour zones — match your palette numbers")
+    _mark(4, name4)
     color_on_canvas = apply_lines(color_arr, line_alpha=0.7)
     for i in range(anim_n):
         t = i / max(1, anim_n - 1)
         frame = _lerp(notan_on_canvas, color_on_canvas, t)
-        frame = _label_frame(frame, "Step 4 — Colour Blocking",
-                             "Fill flat colour zones — match your palette numbers")
-        _write_frames(writer, [frame])
-    f4 = _label_frame(color_on_canvas, "Step 4 — Colour Blocking",
-                      "Fill flat colour zones — match your palette numbers")
-    _write_frames(writer, [f4] * (fps // 2))
+        frame = _label_frame(frame, name4, desc4)
+        _write([frame])
+    f4 = _label_frame(color_on_canvas, name4, desc4)
+    _write([f4] * (fps // 2))
 
-    # ── Phase 5: Detail & edge refinement (re-apply crisp lines) ─────────
-    detail = apply_lines(color_arr, line_alpha=1.0)
+    # ── Phase 5a: Edge refinement (short hold, stage 5's own label) ───────
+    name5, desc5 = _stage_label(stages, 5, "Step 5 — Edge Refinement", "Harden the edges that matter, soften the rest")
+    _mark(5, name5)
+    f5a = _label_frame(color_on_canvas, name5, desc5)
+    _write([f5a] * (fps // 2))
+
+    # ── Phase 5b: Detail & texture (re-apply crisp lines, stage 6 label) ──
+    name6, desc6 = _stage_label(stages, 6, "Step 6 — Detail & Edges", "Sharpen edges, add final accents and highlights")
+    _mark(6, name6)
+    detail = apply_lines(detail_arr, line_alpha=1.0)
     for i in range(anim_n):
         t = i / max(1, anim_n - 1)
         frame = _lerp(color_on_canvas, detail, t)
-        frame = _label_frame(frame, "Step 5 — Detail & Edges",
-                             "Sharpen edges, add final accents and highlights")
-        _write_frames(writer, [frame])
-    f5 = _label_frame(detail, "Step 5 — Detail & Edges",
-                      "Sharpen edges, add final accents and highlights")
-    _write_frames(writer, [f5] * hold_n)
+        frame = _label_frame(frame, name6, desc6)
+        _write([frame])
+    f6 = _label_frame(detail, name6, desc6)
+    _write([f6] * hold_n)
 
     # ── Phase 6: Split comparison (final vs reference) ────────────────────
+    _mark(7, "Result")
     half = W // 2
     for i in range(anim_n):
         t = i / max(1, anim_n - 1)
@@ -212,14 +253,14 @@ def generate(
         comp[:, :cut] = ref_arr[:, :cut]
         comp[:, cut:cut+3] = [255, 255, 0]   # yellow divider
         comp = _label_frame(comp, "Result — Follow these steps and you get this",
-                            "← Reference  |  Your painting →")
-        _write_frames(writer, [comp])
+                            "Reference (left) vs your painting (right)")
+        _write([comp])
     final_comp = detail.copy()
     final_comp[:, :half]      = ref_arr[:, :half]
     final_comp[:, half:half+3] = [255, 255, 0]
     final_comp = _label_frame(final_comp, "Result — Follow these steps and you get this",
-                              "← Reference  |  Your painting →")
-    _write_frames(writer, [final_comp] * (hold_n * 2))
+                              "Reference (left) vs your painting (right)")
+    _write([final_comp] * (hold_n * 2))
 
     writer.release()
-    return output_path
+    return {"path": output_path, "chapters": chapters}

@@ -61,7 +61,7 @@ def pipeline_result():
             job_id,
             medium="oil",
             palette_size=6,
-            detail_level=3,
+            initial_view_level=3,
             value_zones=3,
         )
 
@@ -117,7 +117,22 @@ class TestEndToEnd:
     def test_input_params_recorded_in_manifest(self, pipeline_result):
         result, _, job_id = pipeline_result
         data = json.loads(Path(result["manifest"]).read_text())
-        assert data["input"]["medium"]       == "oil"
-        assert data["input"]["palette_size"] == 6
-        assert data["input"]["value_zones"]  == 3
+        assert data["input"]["medium"]              == "oil"
+        assert data["input"]["palette_size"]        == 6
+        assert data["input"]["value_zones"]         == 3
+        assert data["input"]["initial_view_level"]  == 3
+        assert "texture_detail"    in data["input"]
+        assert "background_detail" in data["input"]
         assert data["job_id"]               == job_id
+
+    def test_lesson_plan_resolves_to_existing_assets(self, pipeline_result):
+        """Every asset referenced in lesson_plan must exist on disk."""
+        result, out_dir, _ = pipeline_result
+        data = json.loads(Path(result["manifest"]).read_text())
+        assert "lesson_plan" in data
+        assert len(data["lesson_plan"]) > 0
+        for step in data["lesson_plan"]:
+            assert step["assets"], f"lesson_plan step {step['name']!r} resolved no assets"
+            for layer_key, rel_path in step["assets"].items():
+                full = out_dir.parent / rel_path
+                assert full.exists(), f"lesson_plan asset missing: {layer_key} -> {rel_path}"

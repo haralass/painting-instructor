@@ -12,7 +12,7 @@ const MEDIUMS = [
   { id: "charcoal",   label: "Charcoal",    icon: "⬛", tip: "Broad marks, erasable highlights. Great for tonal studies." },
 ];
 
-const DETAIL_LEVELS = [
+const INITIAL_VIEW_LEVELS = [
   { value: 1, label: "Foundation",    desc: "Basic shapes + primary contours only. Best for beginners." },
   { value: 2, label: "Simplified",    desc: "Major forms + key shadows. Quick study." },
   { value: 3, label: "Standard",      desc: "Balanced detail + colour zones. Most paintings." },
@@ -30,7 +30,7 @@ export default function HomePage() {
   const [preview,     setPreview]     = useState<string | null>(null);
   const [medium,      setMedium]      = useState("oil");
   const [paletteSize, setPaletteSize] = useState(12);
-  const [detailLevel, setDetailLevel] = useState(3);
+  const [initialViewLevel, setInitialViewLevel] = useState(3);
   const [valueZones,  setValueZones]  = useState<3 | 5 | 7>(5);
   const [regionComplexity, setRegionComplexity] = useState(3);
   const [textureDetail, setTextureDetail] = useState(true);
@@ -82,7 +82,7 @@ export default function HomePage() {
       form.append("file",         file);
       form.append("medium",       medium);
       form.append("palette_size", String(paletteSize));
-      form.append("detail_level", String(detailLevel));
+      form.append("initial_view_level", String(initialViewLevel));
       form.append("value_zones",  String(valueZones));
       form.append("region_complexity",  String(regionComplexity));
       form.append("texture_detail",    String(textureDetail));
@@ -102,7 +102,7 @@ export default function HomePage() {
   }
 
   const selectedMedium = MEDIUMS.find(m => m.id === medium);
-  const selectedDetail = DETAIL_LEVELS.find(d => d.value === detailLevel);
+  const selectedDetail = INITIAL_VIEW_LEVELS.find(d => d.value === initialViewLevel);
 
   return (
     <main className="min-h-screen flex flex-col items-center justify-center px-4 py-16"
@@ -216,19 +216,19 @@ export default function HomePage() {
           </p>
         </div>
 
-        {/* Detail level */}
+        {/* Initial view level */}
         <div>
           <label className="block text-sm font-medium mb-3" style={{ color: "var(--text-dim)" }}>
-            Starting detail level
+            Starting view level
           </label>
           <div className="flex flex-wrap gap-2">
-            {DETAIL_LEVELS.map(d => (
-              <button key={d.value} onClick={() => setDetailLevel(d.value)}
+            {INITIAL_VIEW_LEVELS.map(d => (
+              <button key={d.value} onClick={() => setInitialViewLevel(d.value)}
                       className="px-3 py-2 rounded-lg border text-sm font-medium transition-colors"
                       style={{
-                        background:  detailLevel === d.value ? "var(--accent)" : "var(--surface)",
-                        color:       detailLevel === d.value ? "#0f0e0d"       : "var(--text)",
-                        borderColor: detailLevel === d.value ? "var(--accent)" : "var(--border)",
+                        background:  initialViewLevel === d.value ? "var(--accent)" : "var(--surface)",
+                        color:       initialViewLevel === d.value ? "#0f0e0d"       : "var(--text)",
+                        borderColor: initialViewLevel === d.value ? "var(--accent)" : "var(--border)",
                       }}>
                 {d.label}
               </button>
@@ -237,6 +237,9 @@ export default function HomePage() {
           {selectedDetail && (
             <p className="text-xs mt-2" style={{ color: "var(--text-dim)" }}>{selectedDetail.desc}</p>
           )}
+          <p className="text-xs mt-1" style={{ color: "var(--text-dim)" }}>
+            All 5 levels are always generated — this only picks which one opens first.
+          </p>
         </div>
 
         {/* Region complexity */}

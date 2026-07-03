@@ -115,7 +115,7 @@ type Manifest = {
   input: {
     medium: string;
     palette_size: number;
-    detail_level: number;
+    initial_view_level: number;
     value_zones: number;
     region_complexity?: number;
     background_detail?: boolean;
@@ -129,6 +129,7 @@ type Manifest = {
     outlines: string; regions: string; values: string; colours: string;
   }>;
   edge_maps?: Record<string, string>;  // A4: "primary"|"secondary"|"decorative"|"texture" → rel path
+  outline_composites?: Record<string, string>;  // global (non-level-filtered) outline composites
   palette: { id: number; name: string; base_rgb: [number,number,number]; area_fraction: number }[];
   colour_families: unknown[];
   value_zones: { id: number; label: string; grey_value: number }[];
@@ -139,7 +140,16 @@ type Manifest = {
     analysis_layers: string[];
   }[];
   teaching_instructions?: Record<string, string>;
+  lesson_plan?: {
+    order: number;
+    name: string;
+    description: string;
+    medium: string;
+    level: number;
+    assets: Record<string, string>;
+  }[];
   video?: string;
+  video_chapters?: { order: number; name: string; start_sec: number }[];
   pdf?: string;
   status?: string;  // A3: "analysis_ready" when progressive delivery is active
 };
@@ -205,7 +215,8 @@ export default function ResultsPage() {
     setOutlineSublayers(prev => ({ ...prev, [key]: !prev[key] }));
   }
 
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollRef  = useRef<ReturnType<typeof setInterval> | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   const fetchManifest = useCallback(async (manifestUrl: string) => {
     try {
@@ -222,8 +233,8 @@ export default function ResultsPage() {
         setClassicPages(ps);
         if (ps.length > 0 && !selected) setSelected(ps[0]);
 
-        // Set default detail level from input
-        if (data.input?.detail_level) setDetailLevel(data.input.detail_level);
+        // Set default viewing level from the initial_view_level the user picked at upload
+        if (data.input?.initial_view_level) setDetailLevel(data.input.initial_view_level);
       }
     } catch { /* non-critical */ }
   }, [selected]);
@@ -476,8 +487,28 @@ export default function ResultsPage() {
             <p className="text-xs font-semibold uppercase tracking-widest mb-2"
                style={{ color: "var(--text-dim)" }}>Tutorial Video</p>
             {videoReady ? (
-              <video src={absUrl(manifest!.video!)} controls className="w-full rounded-xl"
-                     style={{ background: "#000", maxHeight: 380 }} />
+              <>
+                <video ref={videoRef} src={absUrl(manifest!.video!)} controls className="w-full rounded-xl"
+                       style={{ background: "#000", maxHeight: 380 }} />
+                {manifest?.video_chapters && manifest.video_chapters.length > 0 && (
+                  <div className="flex gap-1.5 flex-wrap mt-2">
+                    {manifest.video_chapters.map(ch => (
+                      <button
+                        key={ch.order}
+                        onClick={() => {
+                          if (videoRef.current) {
+                            videoRef.current.currentTime = ch.start_sec;
+                            videoRef.current.play();
+                          }
+                        }}
+                        className="px-2.5 py-1 rounded text-xs border transition-colors"
+                        style={{ borderColor: "var(--border)", color: "var(--text-dim)" }}>
+                        {ch.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
             ) : (
               <div className="w-full rounded-xl flex items-center justify-center"
                    style={{ background: "var(--surface)", height: 180 }}>
@@ -663,28 +694,43 @@ export default function ResultsPage() {
               </p>
             </div>
 
-            {/* Teaching stages */}
+            {/* Teaching stages — each backed by a real lesson_plan step when available */}
             {manifest?.teaching_stages && manifest.teaching_stages.length > 0 && (
               <div className="p-4 border-b" style={{ borderColor: "var(--border)" }}>
                 <p className="text-xs font-semibold uppercase tracking-widest mb-3"
                    style={{ color: "var(--text-dim)" }}>Lesson stages</p>
                 <div className="space-y-3">
-                  {manifest.teaching_stages.map(stage => (
-                    <div key={stage.order} className="flex gap-2">
-                      <div className="flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold mt-0.5"
-                           style={{ background: "var(--accent)", color: "#0f0e0d" }}>
-                        {stage.order}
+                  {manifest.teaching_stages.map(stage => {
+                    const step = manifest.lesson_plan?.find(s => s.order === stage.order);
+                    return (
+                      <div key={stage.order} className="flex gap-2">
+                        <div className="flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold mt-0.5"
+                             style={{ background: "var(--accent)", color: "#0f0e0d" }}>
+                          {stage.order}
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold" style={{ color: "var(--text)" }}>
+                            {stage.name}
+                          </p>
+                          <p className="text-xs mt-0.5 leading-relaxed" style={{ color: "var(--text-dim)" }}>
+                            {stage.description}
+                          </p>
+                          {step && (
+                            <button
+                              onClick={() => {
+                                setViewMode("hierarchical_lesson");
+                                setDetailLevel(step.level);
+                                setCompareMode("analysis");
+                              }}
+                              className="text-xs mt-1 underline"
+                              style={{ color: "var(--accent)" }}>
+                              View this step (Level {step.level}) →
+                            </button>
+                          )}
+                        </div>
                       </div>
-                      <div>
-                        <p className="text-xs font-semibold" style={{ color: "var(--text)" }}>
-                          {stage.name}
-                        </p>
-                        <p className="text-xs mt-0.5 leading-relaxed" style={{ color: "var(--text-dim)" }}>
-                          {stage.description}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}

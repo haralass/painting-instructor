@@ -37,6 +37,30 @@ jobs:
           REDIS_URL: redis://localhost:6379/0
           OUTPUTS_DIR: /tmp/test-outputs
 
+  integration-tests:
+    name: Backend — Full-pipeline integration test
+    runs-on: ubuntu-latest
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
       - name: Run full-pipeline integration test (upload -> worker -> manifest -> PDF -> video)
         run: python -m pytest tests/test_integration.py -v --tb=short -q
         env:

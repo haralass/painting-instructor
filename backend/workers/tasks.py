@@ -4,6 +4,7 @@ import logging
 import os
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from celery import Celery
@@ -61,13 +62,14 @@ def run_pipeline(
 
     Steps:
       1. loading          — open & resize image
-      2. line_art         — 3-layer composite + fg_mask
-      3. notan            — adaptive value study
-      4. color_temperature— LAB b* warm/cool map (fixed channel)
-      5. color_palette    — K-means++ dominant colour chart
-      6. light_direction  — Sobel histogram + 5-zone overlay
-      7. color_by_number  — bilateral+RAG paint-by-numbers
-      8. dot_to_dot       — skeleton arc-length numbered dots (reuses line art)
+      2-7. (concurrent, independent of each other):
+         line_art         — 3-layer composite + fg_mask
+         notan            — adaptive value study
+         color_temperature— LAB b* warm/cool map (fixed channel)
+         color_palette    — K-means++ dominant colour chart
+         light_direction  — Sobel histogram + 5-zone overlay
+         color_by_number  — bilateral+RAG paint-by-numbers
+      8. dot_to_dot       — skeleton arc-length numbered dots (needs line_art's result)
       9. hierarchical     — multi-scale region hierarchy + edge classification
      10. video            — progressive tutorial animation
      11. pdf              — A4 book of all pages that succeeded
@@ -128,9 +130,15 @@ def run_pipeline(
         result.save(p)
         return p
 
-    def run(name: str, fn):
-        """Run one pipeline step; log errors without aborting the whole job."""
-        progress(name)
+    def _run_silent(name: str, fn):
+        """
+        Time + error-capture a step without reporting progress. Celery binds
+        the task's request context (self.request.id) thread-locally, so
+        self.update_state() only works on the thread Celery itself invoked
+        the task on — calling it from a ThreadPoolExecutor worker thread
+        raises (task_id is None there). Used for steps run concurrently;
+        the caller reports progress from the main thread instead.
+        """
         t0 = time.perf_counter()
         try:
             result = fn()
@@ -143,6 +151,12 @@ def run_pipeline(
             log.warning("Pipeline step %r failed:\n%s", name, tb)
             return None
 
+    def run(name: str, fn):
+        """Run one pipeline step on the main thread; log errors without
+        aborting the whole job."""
+        progress(name)
+        return _run_silent(name, fn)
+
     # ── Step 1: Load ──────────────────────────────────────────────────────────
     progress("loading")
     img = load_image(img_path)
@@ -154,43 +168,54 @@ def run_pipeline(
     ref_path = str(out_dir / f"reference{suffix}")
     shutil.copy2(img_path, ref_path)
 
-    # ── Step 2: Line art ──────────────────────────────────────────────────────
-    la_result, fg_mask = None, None
-    try:
-        progress("line_art")
-        t0 = time.perf_counter()
-        la_result, fg_mask = line_art_with_mask(img)
-        timings["line_art"] = round(time.perf_counter() - t0, 2)
-        pages.append(save("line_art", la_result))
-    except Exception:
-        tb = traceback.format_exc()
-        errors["line_art"] = tb
-        log.warning("Pipeline step 'line_art' failed:\n%s", tb)
+    # ── Steps 2-7: independent classic-analysis steps — run concurrently ──────
+    # None of these six depend on each other's output (only dot_to_dot below
+    # needs line_art's result), so running them in a thread pool instead of
+    # one after another cuts wall-clock pipeline time — they're numpy/opencv/
+    # sklearn heavy and release the GIL during the actual computation.
+    # `run()` still records each step's own progress/timing/errors exactly as
+    # it did when called sequentially.
+    parallel_jobs = {
+        "line_art":          lambda: line_art_with_mask(img),
+        "notan":             lambda: notan(img, zones=value_zones),
+        "color_temperature": lambda: color_temperature(img),
+        "color_palette":     lambda: color_palette(img, n_colors=palette_size),
+        "light_direction":   lambda: light_direction(img),
+        "color_by_number":   lambda: color_by_number(img, n_colors=palette_size),
+    }
+    parallel_results: dict[str, object] = {}
+    with ThreadPoolExecutor(max_workers=len(parallel_jobs)) as executor:
+        future_to_name = {executor.submit(_run_silent, name, fn): name for name, fn in parallel_jobs.items()}
+        for future in as_completed(future_to_name):
+            name = future_to_name[future]
+            parallel_results[name] = future.result()
+            progress(name)  # reported from the main thread as each step finishes
 
-    # ── Step 3: Notan ─────────────────────────────────────────────────────────
-    notan_result = run("notan", lambda: notan(img, zones=value_zones))
+    la_result, fg_mask = None, None
+    la_out = parallel_results.get("line_art")
+    if la_out:
+        la_result, fg_mask = la_out
+        pages.append(save("line_art", la_result))
+
+    notan_result = parallel_results.get("notan")
     if notan_result:
         pages.append(save("notan", notan_result))
 
-    # ── Step 4: Colour temperature ────────────────────────────────────────────
-    r = run("color_temperature", lambda: color_temperature(img))
+    r = parallel_results.get("color_temperature")
     if r:
         pages.append(save("color_temperature", r))
 
-    # ── Step 5: Colour palette ────────────────────────────────────────────────
-    r = run("color_palette", lambda: color_palette(img, n_colors=palette_size))
+    r = parallel_results.get("color_palette")
     if r:
         pages.append(save("color_palette", r))
 
-    # ── Step 6: Light direction ───────────────────────────────────────────────
-    r = run("light_direction", lambda: light_direction(img))
+    r = parallel_results.get("light_direction")
     if r:
         pages.append(save("light_direction", r))
 
-    # ── Step 7: Color by number ───────────────────────────────────────────────
     # Perf: O(P×E) full-image mask comparisons have been eliminated via per-label
     # LUT precomputation in color_by_number/processor.py.
-    cbn_result = run("color_by_number", lambda: color_by_number(img, n_colors=palette_size))
+    cbn_result = parallel_results.get("color_by_number")
     if cbn_result:
         pages.append(save("color_by_number", cbn_result))
     log.info("color_by_number timing: %.2fs", timings.get("color_by_number", 0.0))

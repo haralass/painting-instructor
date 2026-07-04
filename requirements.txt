@@ -30,3 +30,7 @@ fpdf2>=2.7
 
 # Geometry (edge contour JSON/SVG export)
 shapely>=2.0
+
+# Personal observations (Claude vision call, optional — degrades gracefully
+# without ANTHROPIC_API_KEY)
+anthropic>=0.40

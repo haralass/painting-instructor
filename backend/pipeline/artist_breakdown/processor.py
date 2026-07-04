@@ -138,6 +138,11 @@ def color_temperature(img: Image.Image) -> Image.Image:
 
 
 def light_direction(img: Image.Image) -> Image.Image:
+    """Backwards-compatible wrapper — image only."""
+    return light_direction_with_angle(img)[0]
+
+
+def light_direction_with_angle(img: Image.Image) -> tuple[Image.Image, float]:
     """
     Light source direction via Sobel gradient orientation histogram.
     Overlay: 5 Gurney modeling zones color-coded on greyscale.
@@ -147,6 +152,11 @@ def light_direction(img: Image.Image) -> Image.Image:
       - Reflected light (medium grey)
       - Cast shadow (near black)
     + Arrow indicating dominant light direction.
+
+    Returns (overlay_image, dominant_angle_deg). The angle
+    (0=right, 90=top, 180=left, 270=bottom) is teaching data — the lesson
+    planner uses it to tell the student where the light actually comes from,
+    instead of the number living and dying inside this rendered arrow.
     """
     arr  = np.array(img.convert("RGB"), dtype=np.float32) / 255.0
     gray = (skcolor.rgb2gray(arr) * 255).astype(np.uint8)
@@ -200,7 +210,7 @@ def light_direction(img: Image.Image) -> Image.Image:
         tc = (20, 20, 20) if max(color) > 140 else (220, 220, 220)
         dr.text((4, 20 + i * 18), label, fill=tc, font=fn)
 
-    return out
+    return out, dom_angle
 
 
 def tonal_map(img: Image.Image) -> Image.Image:

@@ -4,6 +4,7 @@ from .watercolor import WATERCOLOR
 from .acrylic import ACRYLIC
 from .pencil import PENCIL
 from .charcoal import CHARCOAL
+from .digital import DIGITAL
 
 MEDIUMS: dict[str, dict] = {
     "oil":       OIL,
@@ -11,6 +12,7 @@ MEDIUMS: dict[str, dict] = {
     "acrylic":   ACRYLIC,
     "pencil":    PENCIL,
     "charcoal":  CHARCOAL,
+    "digital":   DIGITAL,
 }
 
 

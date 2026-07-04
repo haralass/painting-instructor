@@ -121,6 +121,7 @@ type Manifest = {
     region_complexity?: number;
     background_detail?: boolean;
     texture_detail?: boolean;
+    skill_level?: string;
   };
   image: { width: number; height: number };
   reference?: string;
@@ -146,10 +147,21 @@ type Manifest = {
     order: number;
     name: string;
     description: string;
+    why?: string;
     medium: string;
     level: number;
     assets: Record<string, string>;
+    image_notes?: string[];
   }[];
+  image_brief?: {
+    overview?: string;
+    light?: { angle: number | null; from: string | null };
+    masses?: { location: string; colour_name: string; value_label: string; area_frac: number }[];
+    focal?: { location: string } | null;
+    busy_areas?: { location: string; region_count: number }[];
+    warmest_colour?: string | null;
+    coolest_colour?: string | null;
+  };
   video?: string;
   video_chapters?: { order: number; name: string; start_sec: number }[];
   pdf?: string;
@@ -188,8 +200,11 @@ export default function ResultsPage() {
   const [selected,     setSelected]     = useState<AnalysisPage | null>(null);
   const [whyOpen,      setWhyOpen]      = useState(false);
 
-  // A2: Explicit view mode — classic_analysis vs hierarchical_lesson
-  const [viewMode, setViewMode] = useState<"classic_analysis" | "hierarchical_lesson">("hierarchical_lesson");
+  // View mode — "lesson" is the guided step-by-step teacher (default);
+  // "hierarchical_lesson" is the free layer explorer; "classic_analysis"
+  // shows the seven classic study pages; "critique" compares an uploaded
+  // attempt against the reference.
+  const [viewMode, setViewMode] = useState<"lesson" | "classic_analysis" | "hierarchical_lesson" | "critique">("lesson");
 
   // Hierarchical controls
   const [detailLevel,  setDetailLevel]  = useState(3);
@@ -244,6 +259,11 @@ export default function ResultsPage() {
 
         // Set default viewing level from the initial_view_level the user picked at upload
         if (data.input?.initial_view_level) setDetailLevel(data.input.initial_view_level);
+
+        // No lesson plan (old job / failed resolution) — fall back to the explorer
+        if (!data.lesson_plan || data.lesson_plan.length === 0) {
+          setViewMode(prev => (prev === "lesson" ? "hierarchical_lesson" : prev));
+        }
       }
     } catch { /* non-critical */ }
   }, []);
@@ -448,26 +468,28 @@ export default function ResultsPage() {
         <nav className="w-44 flex-shrink-0 overflow-y-auto border-r p-2 space-y-1 hidden md:block"
              style={{ borderColor: "var(--border)" }}>
 
-          {/* A2: View mode switcher */}
+          {/* View mode switcher */}
           <div className="flex flex-col gap-1 mb-3">
-            <button
-              onClick={() => setViewMode("hierarchical_lesson")}
-              className="w-full text-left px-2 py-1.5 rounded text-xs font-medium transition-colors"
-              style={{
-                background: viewMode === "hierarchical_lesson" ? "var(--accent)" : "var(--surface)",
-                color:      viewMode === "hierarchical_lesson" ? "#0f0e0d" : "var(--text-dim)",
-              }}>
-              Hierarchical Lesson
-            </button>
-            <button
-              onClick={() => { setViewMode("classic_analysis"); if (!selected && classicPages[0]) setSelected(classicPages[0]); }}
-              className="w-full text-left px-2 py-1.5 rounded text-xs font-medium transition-colors"
-              style={{
-                background: viewMode === "classic_analysis" ? "var(--accent)" : "var(--surface)",
-                color:      viewMode === "classic_analysis" ? "#0f0e0d" : "var(--text-dim)",
-              }}>
-              Classic Analysis
-            </button>
+            {([
+              ["lesson",              "Lesson",          Boolean(manifest?.lesson_plan?.length)],
+              ["hierarchical_lesson", "Explore Layers",  true],
+              ["classic_analysis",    "Classic Analysis", true],
+              ["critique",            "Get Critique",    true],
+            ] as const).map(([mode, label, enabled]) => enabled && (
+              <button
+                key={mode}
+                onClick={() => {
+                  setViewMode(mode);
+                  if (mode === "classic_analysis" && !selected && classicPages[0]) setSelected(classicPages[0]);
+                }}
+                className="w-full text-left px-2 py-1.5 rounded text-xs font-medium transition-colors"
+                style={{
+                  background: viewMode === mode ? "var(--accent)" : "var(--surface)",
+                  color:      viewMode === mode ? "#0f0e0d" : "var(--text-dim)",
+                }}>
+                {label}
+              </button>
+            ))}
           </div>
 
           {viewMode === "classic_analysis" && (
@@ -507,6 +529,41 @@ export default function ResultsPage() {
 
         {/* ── Centre: video + main image + controls ───────────────────────── */}
         <section className="flex-1 flex flex-col overflow-y-auto min-w-0">
+
+          {/* Mobile mode switcher — the left nav is hidden below md */}
+          <div className="flex gap-1.5 p-3 overflow-x-auto md:hidden flex-shrink-0 border-b"
+               style={{ borderColor: "var(--border)" }}>
+            {([
+              ["lesson",              "Lesson"],
+              ["hierarchical_lesson", "Layers"],
+              ["classic_analysis",    "Analysis"],
+              ["critique",            "Critique"],
+            ] as const).map(([mode, label]) => (
+              <button key={mode}
+                      onClick={() => {
+                        setViewMode(mode);
+                        if (mode === "classic_analysis" && !selected && classicPages[0]) setSelected(classicPages[0]);
+                      }}
+                      className="flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors"
+                      style={{
+                        background: viewMode === mode ? "var(--accent)" : "var(--surface)",
+                        color:      viewMode === mode ? "#0f0e0d" : "var(--text-dim)",
+                        border:     "1px solid var(--border)",
+                      }}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {viewMode === "lesson" && manifest?.lesson_plan && manifest.lesson_plan.length > 0 ? (
+            <LessonPlayer
+              manifest={manifest}
+              referenceUrl={referenceUrl}
+              videoReady={videoReady}
+            />
+          ) : viewMode === "critique" ? (
+            <CritiquePanel jobId={jobId} referenceUrl={referenceUrl} />
+          ) : (<>
 
           {/* About Your Image — grounded in this job's own analysis (Claude
               vision call), not a per-medium template. Absent entirely when
@@ -717,10 +774,13 @@ export default function ResultsPage() {
               </div>
             )}
           </div>
+          </>)}
         </section>
 
-        {/* ── Right: teaching instructions panel ──────────────────────── */}
-        {manifest?.input && (
+        {/* ── Right: teaching instructions panel — the lesson player and the
+              critique view carry their own teaching column, so this aside
+              only accompanies the explorer/classic modes ─────────────────── */}
+        {manifest?.input && (viewMode === "hierarchical_lesson" || viewMode === "classic_analysis") && (
           <aside className="w-72 flex-shrink-0 border-l overflow-y-auto hidden lg:block"
                  style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
             <div className="p-4 border-b" style={{ borderColor: "var(--border)" }}>
@@ -968,6 +1028,309 @@ function ImageDisplay({
         ? <img src={analysisUrl} alt={title || "Analysis"} className="w-full rounded-xl object-contain max-h-[520px]" />
         : <LayerStack assets={activeAssets} imageWidth={imageWidth} imageHeight={imageHeight} maxHeight={520} />
       }
+    </div>
+  );
+}
+
+// ── Lesson player — the guided, step-by-step teacher ─────────────────────────
+function LessonPlayer({
+  manifest,
+  referenceUrl,
+  videoReady,
+}: {
+  manifest: Manifest;
+  referenceUrl: string;
+  videoReady: boolean;
+}) {
+  const steps = [...(manifest.lesson_plan ?? [])].sort((a, b) => a.order - b.order);
+  const [idx, setIdx] = useState(0);
+  const [showRef, setShowRef] = useState(false);
+  const step = steps[idx];
+  const brief = manifest.image_brief;
+
+  if (!step) return null;
+
+  const assets = Object.values(step.assets ?? {}).map(outputUrl).filter(Boolean);
+  const stepLabel = step.order === 0 ? "Warm-up" : step.order === 99 ? "Final check" : `Step ${step.order}`;
+
+  return (
+    <div className="p-4 md:p-6 space-y-5">
+
+      {/* The teacher's brief — image-specific, computed from THIS photo */}
+      {(brief?.overview || manifest.personal_observations) && idx === 0 && (
+        <div className="rounded-xl p-4"
+             style={{ background: "rgba(220,165,94,0.07)", border: "1px solid rgba(220,165,94,0.25)" }}>
+          <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: "var(--accent)" }}>
+            Before you start — about your photo
+          </p>
+          {brief?.overview && (
+            <p className="text-sm leading-relaxed" style={{ color: "var(--text)" }}>{brief.overview}</p>
+          )}
+          {manifest.personal_observations && (
+            <p className="text-sm leading-relaxed mt-2" style={{ color: "var(--text-dim)" }}>
+              {manifest.personal_observations}
+            </p>
+          )}
+        </div>
+      )}
+
+      <div className="flex flex-col lg:flex-row gap-5">
+
+        {/* Visual for this step */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs" style={{ color: "var(--text-dim)" }}>
+              {showRef ? "Reference photo" : "What to look at for this step"}
+            </p>
+            <button onClick={() => setShowRef(!showRef)}
+                    className="px-3 py-1 rounded border text-xs transition-colors"
+                    style={{
+                      background:  showRef ? "var(--accent)" : "var(--surface)",
+                      color:       showRef ? "#0f0e0d" : "var(--text-dim)",
+                      borderColor: "var(--border)",
+                    }}>
+              {showRef ? "Show analysis" : "Show reference"}
+            </button>
+          </div>
+          {showRef || assets.length === 0 ? (
+            <img src={referenceUrl} alt="Reference"
+                 className="w-full rounded-xl object-contain layer-transition" style={{ maxHeight: 500 }} />
+          ) : (
+            <LayerStack assets={assets}
+                        imageWidth={manifest.image?.width} imageHeight={manifest.image?.height}
+                        maxHeight={500} />
+          )}
+        </div>
+
+        {/* Teaching column */}
+        <div className="w-full lg:w-80 flex-shrink-0 space-y-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: "var(--accent)" }}>
+              {stepLabel} of {steps.filter(s => 1 <= s.order && s.order < 90).length}
+              {manifest.input?.skill_level ? ` · ${manifest.input.skill_level}` : ""}
+            </p>
+            <h2 className="text-xl font-bold mb-2" style={{ color: "var(--text)" }}>{step.name}</h2>
+            <p className="text-sm leading-relaxed" style={{ color: "var(--text)" }}>{step.description}</p>
+          </div>
+
+          {/* For YOUR photo — the personal part */}
+          {step.image_notes && step.image_notes.length > 0 && (
+            <div className="rounded-xl p-3"
+                 style={{ background: "rgba(220,165,94,0.08)", border: "1px solid rgba(220,165,94,0.3)" }}>
+              <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: "var(--accent)" }}>
+                For your photo
+              </p>
+              <ul className="space-y-2">
+                {step.image_notes.map((n, i) => (
+                  <li key={i} className="text-sm leading-relaxed" style={{ color: "var(--text)" }}>{n}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Why */}
+          {step.why && (
+            <div className="rounded-xl p-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+              <p className="text-xs font-semibold uppercase tracking-widest mb-1.5" style={{ color: "var(--text-dim)" }}>
+                Why this step
+              </p>
+              <p className="text-sm leading-relaxed" style={{ color: "var(--text-dim)" }}>{step.why}</p>
+            </div>
+          )}
+
+          {/* Navigation */}
+          <div className="flex items-center gap-2">
+            <button onClick={() => setIdx(Math.max(0, idx - 1))} disabled={idx === 0}
+                    className="px-4 py-2 rounded-lg border text-sm transition-colors"
+                    style={{
+                      borderColor: "var(--border)", color: "var(--text)",
+                      opacity: idx === 0 ? 0.35 : 1, cursor: idx === 0 ? "default" : "pointer",
+                      background: "var(--surface)",
+                    }}>
+              ← Back
+            </button>
+            <button onClick={() => setIdx(Math.min(steps.length - 1, idx + 1))}
+                    disabled={idx === steps.length - 1}
+                    className="flex-1 px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                    style={{
+                      background: idx === steps.length - 1 ? "var(--surface)" : "var(--accent)",
+                      color:      idx === steps.length - 1 ? "var(--text-dim)" : "#0f0e0d",
+                      cursor:     idx === steps.length - 1 ? "default" : "pointer",
+                    }}>
+              {idx === steps.length - 1 ? "Lesson complete" : "Next step →"}
+            </button>
+          </div>
+
+          {/* Step dots */}
+          <div className="flex gap-1.5 justify-center flex-wrap">
+            {steps.map((s, i) => (
+              <button key={s.order} onClick={() => setIdx(i)} title={s.name}
+                      className="rounded-full transition-all"
+                      style={{
+                        width: i === idx ? 22 : 8, height: 8,
+                        background: i === idx ? "var(--accent)" : i < idx ? "var(--accent-dim)" : "var(--border)",
+                        border: "none", cursor: "pointer",
+                      }} />
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Tutorial video at the end of the lesson */}
+      {videoReady && manifest.video && idx === steps.length - 1 && (
+        <div className="pt-2">
+          <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: "var(--text-dim)" }}>
+            Watch the full progression
+          </p>
+          <video src={absUrl(manifest.video)} controls className="w-full rounded-xl"
+                 style={{ background: "#000", maxHeight: 380 }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Critique panel — upload your attempt, get localised feedback ─────────────
+type CritiqueResult = {
+  scores: { overall: number; values: number; colour: number; structure: number };
+  feedback: { kind: string; area: string; message: string; tip: string; severity: number }[];
+  first_fix: string;
+  assets: { overlay: string; side_by_side: string };
+  attempt: number;
+  attempt_image?: string;
+};
+
+const KIND_COLORS: Record<string, string> = {
+  value:       "#dca55e",
+  temperature: "#bf5b45",
+  saturation:  "#7d92ab",
+  structure:   "#8a9179",
+};
+
+function CritiquePanel({ jobId, referenceUrl }: { jobId: string; referenceUrl: string }) {
+  const [busy,   setBusy]   = useState(false);
+  const [error,  setError]  = useState<string | null>(null);
+  const [result, setResult] = useState<CritiqueResult | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  async function upload(f: File) {
+    if (!f.type.startsWith("image/")) { setError("Please upload an image of your painting."); return; }
+    setBusy(true); setError(null);
+    try {
+      const form = new FormData();
+      form.append("file", f);
+      const res = await fetch(`${API}/jobs/${jobId}/critique`, { method: "POST", body: form });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.detail ?? `Server error: ${res.status}`);
+      }
+      setResult(await res.json());
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Upload failed. Is the backend running?");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="p-4 md:p-6 space-y-5 max-w-4xl">
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: "var(--accent)" }}>
+          Critique {result ? `· attempt ${result.attempt}` : ""}
+        </p>
+        <h2 className="text-xl font-bold mb-1" style={{ color: "var(--text)" }}>
+          Photograph your painting and upload it
+        </h2>
+        <p className="text-sm" style={{ color: "var(--text-dim)" }}>
+          It is compared against the reference — values, colour temperature, saturation and structure,
+          each localised to an area of the picture. Even light, no glare, camera square to the surface.
+        </p>
+      </div>
+
+      <div
+        onClick={() => !busy && inputRef.current?.click()}
+        className="rounded-xl border-2 border-dashed p-8 text-center cursor-pointer transition-colors"
+        style={{ borderColor: "var(--border)", background: "var(--surface)", opacity: busy ? 0.6 : 1 }}
+      >
+        <p className="text-sm font-medium" style={{ color: "var(--text)" }}>
+          {busy ? "Comparing against the reference…" : result ? "Upload another attempt" : "Click to upload your attempt"}
+        </p>
+        <input ref={inputRef} type="file" accept="image/*" className="hidden"
+               onChange={e => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ""; }} />
+      </div>
+
+      {error && (
+        <p className="text-sm px-4 py-3 rounded-lg" style={{ background: "rgba(191,91,69,0.12)", color: "#e0876f" }}>
+          {error}
+        </p>
+      )}
+
+      {result && (
+        <div className="space-y-5 layer-transition">
+
+          {/* Scores */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {([["Overall", result.scores.overall], ["Values", result.scores.values],
+               ["Colour", result.scores.colour], ["Structure", result.scores.structure]] as const
+            ).map(([label, score]) => (
+              <div key={label} className="rounded-xl p-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+                <p className="text-xs mb-1" style={{ color: "var(--text-dim)" }}>{label}</p>
+                <p className="text-2xl font-bold" style={{ color: score >= 80 ? "var(--accent)" : score >= 55 ? "var(--text)" : "#e0876f" }}>
+                  {Math.round(score)}
+                </p>
+                <div className="h-1 rounded-full mt-2 overflow-hidden" style={{ background: "var(--border)" }}>
+                  <div className="h-full rounded-full" style={{ width: `${score}%`, background: "var(--accent)" }} />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* First fix */}
+          <div className="rounded-xl p-4" style={{ background: "rgba(220,165,94,0.08)", border: "1px solid rgba(220,165,94,0.3)" }}>
+            <p className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: "var(--accent)" }}>
+              Fix this first
+            </p>
+            <p className="text-sm leading-relaxed" style={{ color: "var(--text)" }}>{result.first_fix}</p>
+          </div>
+
+          {/* Overlay + reference */}
+          <div className="grid md:grid-cols-2 gap-3">
+            <div>
+              <p className="text-xs mb-2" style={{ color: "var(--text-dim)" }}>
+                Your attempt — tinted where the values drift, circled where it matters most
+              </p>
+              <img src={absUrl(result.assets.overlay)} alt="Critique overlay" className="w-full rounded-xl" />
+            </div>
+            <div>
+              <p className="text-xs mb-2" style={{ color: "var(--text-dim)" }}>Reference</p>
+              <img src={referenceUrl} alt="Reference" className="w-full rounded-xl object-contain" />
+            </div>
+          </div>
+
+          {/* Feedback list */}
+          {result.feedback.length > 0 ? (
+            <div className="space-y-2">
+              {result.feedback.map((f, i) => (
+                <div key={i} className="rounded-xl p-3 flex gap-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+                  <span className="flex-shrink-0 mt-0.5 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
+                        style={{ background: `${KIND_COLORS[f.kind] ?? "#9b9187"}22`, color: KIND_COLORS[f.kind] ?? "#9b9187",
+                                 border: `1px solid ${KIND_COLORS[f.kind] ?? "#9b9187"}55` }}>
+                    {f.kind}
+                  </span>
+                  <div>
+                    <p className="text-sm" style={{ color: "var(--text)" }}>{f.message}</p>
+                    <p className="text-xs mt-1" style={{ color: "var(--accent)" }}>→ {f.tip}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm" style={{ color: "var(--text-dim)" }}>
+              Nothing above tolerance — this attempt tracks the reference well.
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

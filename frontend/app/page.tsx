@@ -16,6 +16,13 @@ const MEDIUMS = [
   { id: "acrylic",    label: "Acrylic",     dot: "#dca55e", tip: "Fast-drying, versatile. Can mimic oil or watercolour." },
   { id: "pencil",     label: "Pencil",      dot: "#9b9187", tip: "Graphite hatching. Build value through layered strokes." },
   { id: "charcoal",   label: "Charcoal",    dot: "#41504f", tip: "Broad marks, erasable highlights. Great for tonal studies." },
+  { id: "digital",    label: "Digital",     dot: "#8a9179", tip: "Layers, undo, and infinite colour — but the same value discipline." },
+];
+
+const SKILL_LEVELS = [
+  { id: "beginner",     label: "Beginner",     tip: "Adds a value warm-up rehearsal before the real painting." },
+  { id: "intermediate", label: "Intermediate", tip: "The standard lesson for your medium." },
+  { id: "advanced",     label: "Advanced",     tip: "Adds a measured self-critique pass at the end." },
 ];
 
 const INITIAL_VIEW_LEVELS = [
@@ -49,6 +56,7 @@ export default function HomePage() {
   const [file,        setFile]        = useState<File | null>(null);
   const [preview,     setPreview]     = useState<string | null>(null);
   const [medium,      setMedium]      = useState("oil");
+  const [skillLevel,  setSkillLevel]  = useState("intermediate");
   const [paletteSize, setPaletteSize] = useState(12);
   const [initialViewLevel, setInitialViewLevel] = useState(3);
   const [valueZones,  setValueZones]  = useState<3 | 5 | 7>(5);
@@ -195,6 +203,7 @@ export default function HomePage() {
       form.append("region_complexity",  String(regionComplexity));
       form.append("texture_detail",    String(textureDetail));
       form.append("background_detail", String(bgDetail));
+      form.append("skill_level",       skillLevel);
 
       const res = await fetch(`${API}/jobs/`, { method: "POST", body: form });
       if (!res.ok) {
@@ -433,6 +442,21 @@ export default function HomePage() {
                 {selectedMedium && (
                   <p className="text-xs mt-2.5" style={{ color: "var(--text-dim)" }}>{selectedMedium.tip}</p>
                 )}
+              </div>
+
+              {/* Skill level */}
+              <div>
+                <label className="label-xs block mb-3">Your level</label>
+                <div className="flex flex-wrap gap-2">
+                  {SKILL_LEVELS.map(s => (
+                    <button key={s.id} onClick={() => setSkillLevel(s.id)} className="chip" data-active={skillLevel === s.id}>
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs mt-2.5" style={{ color: "var(--text-dim)" }}>
+                  {SKILL_LEVELS.find(s => s.id === skillLevel)?.tip}
+                </p>
               </div>
 
               {/* Palette size */}

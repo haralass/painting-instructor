@@ -55,6 +55,7 @@ def run_pipeline(
     texture_detail: bool = True,
     background_detail: bool = False,
     region_complexity: int = 3,   # A6: 1–5 hierarchy resolution
+    skill_level: str = "intermediate",
     # backward-compat alias
     n_colors: int = 0,
 ) -> dict:
@@ -81,7 +82,7 @@ def run_pipeline(
     from ..preprocessing.processor import load_image
     from ..pipeline.line_art.processor import process_with_mask as line_art_with_mask
     from ..pipeline.artist_breakdown.processor import (
-        notan, color_palette, color_temperature, light_direction
+        notan, color_palette, color_temperature, light_direction_with_angle
     )
     from ..pipeline.color_by_number.processor import process as color_by_number
     from ..pipeline.dot_to_dot.processor import process as dot_to_dot
@@ -90,6 +91,7 @@ def run_pipeline(
     from ..teaching.lesson import build_lesson_plan
     from ..teaching.pdf_book import build_tutorial_pdf
     from ..teaching.observations import generate_observations
+    from ..teaching.planner import build_image_brief, attach_image_notes, load_regions
 
     # Resolve backward-compat alias
     if n_colors and not palette_size:
@@ -183,7 +185,7 @@ def run_pipeline(
         "notan":             lambda: notan(img, zones=value_zones),
         "color_temperature": lambda: color_temperature(img),
         "color_palette":     lambda: color_palette(img, n_colors=palette_size),
-        "light_direction":   lambda: light_direction(img),
+        "light_direction":   lambda: light_direction_with_angle(img),
         "color_by_number":   lambda: color_by_number(img, n_colors=palette_size),
     }
     parallel_results: dict[str, object] = {}
@@ -212,9 +214,11 @@ def run_pipeline(
     if r:
         pages.append(save("color_palette", r))
 
+    light_angle: float | None = None
     r = parallel_results.get("light_direction")
     if r:
-        pages.append(save("light_direction", r))
+        light_img, light_angle = r
+        pages.append(save("light_direction", light_img))
 
     # Perf: O(P×E) full-image mask comparisons have been eliminated via per-label
     # LUT precomputation in color_by_number/processor.py.
@@ -266,6 +270,27 @@ def run_pipeline(
         raise RuntimeError(f"Critical hierarchical analysis failed:\n{tb}")
     hier = hier or {}
 
+    # ── Step 9a: Image brief — the personal part of the lesson. Deterministic,
+    #    derived entirely from this job's own analysis data: which masses to
+    #    block in first, where the light comes from, where the focal point is,
+    #    which areas will tempt overworking. ─────────────────────────────────
+    image_brief: dict = {}
+    try:
+        regions_data = load_regions(hier.get("regions_json", "")) if hier.get("regions_json") else []
+        image_brief = build_image_brief(
+            regions=regions_data,
+            palette=hier.get("palette", []),
+            value_zone_list=hier.get("value_zone_list", []),
+            light_angle=light_angle,
+            img_w=img.size[0],
+            img_h=img.size[1],
+            medium=medium,
+        )
+    except Exception:
+        tb = traceback.format_exc()
+        errors["image_brief"] = tb
+        log.warning("Image brief failed:\n%s", tb)
+
     # Write preliminary manifest immediately after hierarchical succeeds
     manifest_path = out_dir / "manifest.json"
     progress("analysis_ready")
@@ -286,6 +311,8 @@ def run_pipeline(
         region_complexity=region_complexity,
         texture_detail=texture_detail,
         background_detail=background_detail,
+        skill_level=skill_level,
+        image_brief=image_brief,
     )
     prelim_manifest["status"] = "analysis_ready"
     manifest_path.write_text(json.dumps(prelim_manifest, indent=2))
@@ -301,7 +328,10 @@ def run_pipeline(
         outline_composites=hier.get("outline_composites", {}),
         value_zones_map=hier.get("value_zones_path"),
         classic_pages=classic_pages,
+        skill_level=skill_level,
     )
+    if image_brief:
+        lesson_plan_abs = attach_image_notes(lesson_plan_abs, image_brief, medium)
 
     # ── Step 9b: Personal observations — one vision call grounded in this
     #    job's actual palette/value zones/region count, unlike every other
@@ -398,6 +428,8 @@ def run_pipeline(
         region_complexity=region_complexity,
         texture_detail=texture_detail,
         background_detail=background_detail,
+        skill_level=skill_level,
+        image_brief=image_brief,
         video_chapters=video_chapters,
         personal_observations=personal_observations,
     )
@@ -495,6 +527,8 @@ def _build_manifest(
     region_complexity: int = 3,
     texture_detail: bool = True,
     background_detail: bool = False,
+    skill_level: str = "intermediate",
+    image_brief: dict | None = None,
     video_chapters: list[dict] | None = None,
     personal_observations: str | None = None,
 ) -> dict:
@@ -522,6 +556,7 @@ def _build_manifest(
             "region_complexity":   region_complexity,
             "texture_detail":      texture_detail,
             "background_detail":   background_detail,
+            "skill_level":         skill_level,
         },
         "image": {"width": w, "height": h},
         "reference": f"{job_id}/reference{ref_suffix}",
@@ -546,13 +581,19 @@ def _build_manifest(
     medium_cfg = _get_medium_for_manifest(medium)
     manifest["teaching_stages"]       = medium_cfg.get("stages", [])
     manifest["teaching_instructions"] = medium_cfg.get("instructions", {})
-    manifest["lesson_plan"] = build_lesson_plan(
+    lesson_steps = build_lesson_plan(
         medium_cfg=medium_cfg,
         medium=medium,
         detail_levels=manifest["detail_levels"],
         outline_composites=outline_composites_rel,
         value_zones_map=value_zones_map,
         classic_pages=classic_pages,
+        skill_level=skill_level,
     )
+    if image_brief:
+        from ..teaching.planner import attach_image_notes as _attach_notes
+        lesson_steps = _attach_notes(lesson_steps, image_brief, medium)
+    manifest["lesson_plan"] = lesson_steps
+    manifest["image_brief"] = image_brief or {}
 
     return manifest

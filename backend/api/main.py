@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 import os
 import uuid
 from pathlib import Path
@@ -19,6 +20,7 @@ from ..schemas.jobs import (
     validate_palette_size,
     validate_initial_view_level,
     validate_value_zones,
+    validate_skill_level,
 )
 from ..teaching.mediums import MEDIUMS, get_medium as _get_medium_cfg
 
@@ -73,6 +75,7 @@ async def create_job(
     texture_detail:     bool = Form(True),
     background_detail:  bool = Form(False),
     region_complexity:  int  = Form(3),   # A6: 1–5 hierarchy resolution
+    skill_level:        str  = Form("intermediate"),
 ):
     """Upload a reference photo and start the painting instructor pipeline."""
     if file.content_type not in ALLOWED_TYPES:
@@ -89,6 +92,7 @@ async def create_job(
         resolved_palette = validate_palette_size(resolved_palette)
         initial_view_level = validate_initial_view_level(initial_view_level)
         value_zones   = validate_value_zones(value_zones)
+        skill_level   = validate_skill_level(skill_level)
     except ValueError as exc:
         raise HTTPException(422, str(exc))
 
@@ -107,6 +111,7 @@ async def create_job(
             "texture_detail":      texture_detail,
             "background_detail":   background_detail,
             "region_complexity":   region_complexity,
+            "skill_level":         skill_level,
         },
         task_id=job_id,
     )
@@ -173,6 +178,66 @@ def get_job(job_id: str) -> JobResponse:
     return JobResponse(job_id=job_id, status="processing", progress=5, step=state.lower(), message="Processing…")
 
 
+# ── POST /jobs/{job_id}/critique ──────────────────────────────────────────────
+@app.post("/jobs/{job_id}/critique")
+async def critique_job(job_id: str, file: UploadFile):
+    """
+    Upload a photo of the student's own painting attempt and get localised,
+    actionable feedback against this job's reference image. Runs synchronously
+    — it is plain CV (value bands, LAB temperature/chroma, edge density), no
+    ML models. Each upload gets its own numbered attempt directory, so the
+    student can track successive attempts at the same lesson.
+    """
+    if file.content_type not in ALLOWED_TYPES:
+        raise HTTPException(400, f"Unsupported image type: {file.content_type}")
+
+    job_out = outputs_root() / job_id
+    reference = next(iter(job_out.glob("reference.*")), None)
+    if reference is None:
+        raise HTTPException(404, "Reference image not found — has the job finished analysing?")
+
+    critique_root = job_out / "critique"
+    attempt_no = 1 + sum(1 for d in critique_root.glob("attempt_*") if d.is_dir()) if critique_root.exists() else 1
+    attempt_dir = critique_root / f"attempt_{attempt_no}"
+    attempt_dir.mkdir(parents=True, exist_ok=True)
+
+    suffix = Path(file.filename or "attempt.jpg").suffix or ".jpg"
+    attempt_path = attempt_dir / f"attempt{suffix}"
+    attempt_path.write_bytes(await file.read())
+
+    # Medium + value zones from the job's manifest, if it exists yet
+    medium, n_bands = "oil", 5
+    manifest_path = job_out / "manifest.json"
+    if manifest_path.exists():
+        try:
+            m_input = json.loads(manifest_path.read_text()).get("input", {})
+            medium = m_input.get("medium", medium)
+            n_bands = int(m_input.get("value_zones", n_bands))
+        except Exception:
+            pass
+
+    from ..critique.engine import critique_attempt, save_critique
+
+    try:
+        result = critique_attempt(
+            reference_path=reference,
+            attempt_path=attempt_path,
+            out_dir=attempt_dir,
+            n_value_bands=n_bands,
+            medium=medium,
+        )
+    except Exception as exc:
+        raise HTTPException(500, f"Critique failed: {exc}")
+
+    result["attempt"] = attempt_no
+    save_critique(result, attempt_dir)
+
+    # Convert filesystem paths to /outputs URLs for the frontend
+    result["assets"] = {k: _path_to_url(v, job_id) for k, v in result["assets"].items()}
+    result["attempt_image"] = _path_to_url(str(attempt_path), job_id)
+    return result
+
+
 # ── GET /jobs/{job_id}/pdf ────────────────────────────────────────────────────
 @app.get("/jobs/{job_id}/pdf")
 def download_pdf(job_id: str):
@@ -213,8 +278,10 @@ def _path_to_url(path: str | None, job_id: str) -> str | None:
         return None
     p = Path(path)
     try:
-        # Convert outputs/{job_id}/foo.png → /outputs/{job_id}/foo.png
-        rel = p.relative_to(OUTPUTS_DIR)
+        # Convert outputs/{job_id}/foo.png → /outputs/{job_id}/foo.png.
+        # outputs_root() is read at call time so nested paths (e.g.
+        # critique/attempt_1/...) survive an OUTPUTS_DIR override in tests.
+        rel = p.relative_to(outputs_root())
         return f"/outputs/{rel}"
     except ValueError:
         return f"/outputs/{job_id}/{p.name}"

@@ -127,8 +127,9 @@ type Manifest = {
   detail_levels: Record<string, {
     level: number; label: string;
     outlines: string; regions: string; values: string; colours: string;
+    edge_maps?: Record<string, string>;  // level-aware sublayers — NOT the same as the top-level edge_maps below
   }>;
-  edge_maps?: Record<string, string>;  // A4: "primary"|"secondary"|"decorative"|"texture" → rel path
+  edge_maps?: Record<string, string>;  // global, non-level-filtered — "primary"|"secondary"|"decorative"|"texture" → rel path
   outline_composites?: Record<string, string>;  // global (non-level-filtered) outline composites
   palette: { id: number; name: string; base_rgb: [number,number,number]; area_fraction: number }[];
   colour_families: unknown[];
@@ -342,13 +343,16 @@ export default function ResultsPage() {
     regions:  "regions",
   };
 
-  // A4: sublayer edge map URLs (global, not per-level)
-  const hasEdgeMaps = Boolean(manifest?.edge_maps && Object.keys(manifest.edge_maps).length > 0);
+  // Sublayer edge map URLs — sourced from the CURRENT level's own edge_maps,
+  // not the global (non-level-filtered) manifest.edge_maps. Using the global
+  // maps here would mean changing the detail level slider never changes the
+  // outline sublayers shown, defeating the point of level-aware outlines.
+  const hasEdgeMaps = Boolean(currentLevelData?.edge_maps && Object.keys(currentLevelData.edge_maps).length > 0);
   const activeSublayerUrls: string[] = hasEdgeMaps
     ? Object.entries(outlineSublayers)
         .filter(([, vis]) => vis)
         .map(([key]) => {
-          const p = manifest?.edge_maps?.[key];
+          const p = currentLevelData?.edge_maps?.[key];
           return p ? outputUrl(p) : null;
         })
         .filter((u): u is string => Boolean(u))

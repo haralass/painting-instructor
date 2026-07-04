@@ -151,6 +151,11 @@ class DetailLevel(BaseModel):
     regions: str = ""        # path to coloured regions PNG
     values: str = ""         # path to value map PNG
     colours: str = ""        # path to flat colour PNG
+    # Level-aware outline sublayers (primary/secondary/decorative/texture),
+    # already filtered to this level's own ancestor-divergent edge set — NOT
+    # the same as the global (non-level-filtered) edge_maps at the top of the
+    # manifest. Only present for types that have at least one edge at this level.
+    edge_maps: dict[str, str] = Field(default_factory=dict)
 
 
 class AnalysisManifest(BaseModel):

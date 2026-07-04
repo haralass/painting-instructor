@@ -129,6 +129,24 @@ class TestFullPipelineIntegration:
                 assert rel, f"level {lvl} missing {field!r} path"
                 assert (OUTPUTS_DIR / rel).exists(), f"level {lvl} {field} file missing: {rel}"
 
+    def test_detail_levels_have_own_outlines_and_edge_maps(self, oil_job):
+        """Each level must carry its own outlines asset and its own
+        (possibly empty) edge_maps dict — the frontend must never fall back
+        to the global manifest.edge_maps for a level's sublayers."""
+        _, _, manifest = oil_job
+        outline_paths = {lvl: data["outlines"] for lvl, data in manifest["detail_levels"].items()}
+        assert len(set(outline_paths.values())) == 5, (
+            f"detail_levels must render 5 distinct outline files, got {outline_paths}"
+        )
+        global_edge_map_paths = set(manifest.get("edge_maps", {}).values())
+        for lvl, data in manifest["detail_levels"].items():
+            assert "edge_maps" in data, f"level {lvl} missing edge_maps key"
+            for type_name, rel in data["edge_maps"].items():
+                assert (OUTPUTS_DIR / rel).exists(), f"level {lvl} edge_maps[{type_name!r}] missing: {rel}"
+                assert rel not in global_edge_map_paths, (
+                    f"level {lvl} edge_maps[{type_name!r}] reuses a global (non-level-aware) path: {rel}"
+                )
+
     def test_lesson_plan_assets_exist(self, oil_job):
         _, _, manifest = oil_job
         assert manifest["lesson_plan"], "lesson_plan is empty"

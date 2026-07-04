@@ -177,6 +177,7 @@ def run_hierarchical_analysis(
             "values":     dl.values,
             "colours":    dl.colours,
             "region_ids": dl.region_ids[:200],
+            "edge_maps":  dl.edge_maps,  # level-aware outline sublayers — absolute, normalised below
         }
 
     # A4: individual edge map absolute paths (normalised in _build_manifest)

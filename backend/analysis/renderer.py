@@ -138,11 +138,25 @@ def render_detail_levels(
         # own region resolution (see pipeline.py's filter_edges_for_level) —
         # so Level 1 is genuinely coarser than Level 5, not just a type mask
         # over one fixed-scale edge set.
+        # Per-level sublayer PNG paths (primary/secondary/decorative/texture),
+        # saved below only when we have genuinely level-aware per-type maps —
+        # this is what the frontend's outline sublayer toggles must read
+        # instead of the global (non-level-filtered) edge_maps, so toggling
+        # detail level actually changes what the sublayers show.
+        level_edge_map_paths: dict[str, str] = {}
+
         if level_edge_maps is not None and lvl in level_edge_maps:
             lvl_maps = level_edge_maps[lvl]
             if medium_strategy is not None:
                 lvl_maps = _apply_medium_to_edge_maps(lvl_maps, medium_strategy)
             outline_arr = _composite_all_edge_maps(lvl_maps)
+
+            for type_name, type_arr in lvl_maps.items():
+                if type_arr is None or not np.any(type_arr):
+                    continue  # no edges of this type at this level — nothing to show
+                type_path = str(out_dir / f"level_{lvl}_edges_{type_name}.png")
+                Image.fromarray(255 - type_arr).save(type_path)
+                level_edge_map_paths[type_name] = type_path
         elif edge_maps is not None and medium_strategy is not None:
             styled = _apply_medium_to_edge_maps(edge_maps, medium_strategy)
             effective_outlines = _composite_edge_maps(styled)
@@ -204,6 +218,7 @@ def render_detail_levels(
             values=value_path,
             colours=colour_path,
             regions=region_path,
+            edge_maps=level_edge_map_paths,
         )
 
     return detail_levels

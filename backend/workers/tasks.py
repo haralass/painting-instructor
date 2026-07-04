@@ -435,6 +435,7 @@ def _normalize_detail_levels(detail_levels: dict) -> dict:
     """A1: convert absolute asset paths in detail_levels to outputs-relative paths."""
     result = {}
     for k, lvl in detail_levels.items():
+        raw_edge_maps = lvl.get("edge_maps") or {}
         result[k] = {
             "level":      lvl.get("level"),
             "label":      lvl.get("label"),
@@ -443,6 +444,9 @@ def _normalize_detail_levels(detail_levels: dict) -> dict:
             "values":     rel_to_outputs(lvl.get("values")),
             "colours":    rel_to_outputs(lvl.get("colours")),
             "region_ids": lvl.get("region_ids", []),
+            # Level-aware outline sublayers — distinct from the global,
+            # non-level-filtered "edge_maps" at the top of the manifest.
+            "edge_maps":  {name: rel_to_outputs(p) for name, p in raw_edge_maps.items() if p},
         }
     return result
 

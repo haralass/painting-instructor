@@ -965,6 +965,93 @@ class TestLevelAwareValueMasses:
         )
 
 
+class TestManifestOutlinesAreLevelAware:
+    """
+    Manifest-level regression test for the frontend bug where changing the
+    detail level slider never changed the outline layer shown: the frontend
+    sourced outline sublayers from the global (non-level-filtered)
+    manifest.edge_maps whenever it existed, instead of each level's own
+    outlines/edge_maps. There is no frontend test runner in this repo, so
+    this proves the fix at the manifest boundary the frontend consumes:
+    each DetailLevel must carry its own distinct outlines asset, and its own
+    edge_maps dict must be genuinely level-scoped (never a stand-in for the
+    global one).
+    """
+
+    def _run(self, tmp_path):
+        from backend.analysis.pipeline import run_hierarchical_analysis
+        # Two large, distinct halves PLUS scattered small dark squares (real
+        # local Canny-detectable contours, unlike smooth per-pixel noise)
+        # — gives both a structural boundary and finer secondary/texture
+        # edges, so Level 1 and Level 5 genuinely have different content to
+        # show instead of rendering byte-identical outlines.
+        h, w = 220, 220
+        arr = np.zeros((h, w, 3), dtype=np.uint8)
+        arr[: h // 2, :] = [220, 60, 60]
+        arr[h // 2 :, :] = [40, 60, 200]
+        rng = np.random.default_rng(0)
+        for _ in range(40):
+            cy = int(rng.integers(5, h - 5))
+            cx = int(rng.integers(5, w - 5))
+            arr[cy - 2 : cy + 2, cx - 2 : cx + 2] = [10, 10, 10]
+        img = Image.fromarray(arr)
+        return run_hierarchical_analysis(
+            img=img,
+            out_dir=tmp_path / "level_aware_outlines",
+            palette_size=8,
+            value_zones=5,
+            medium="oil",
+        )
+
+    def test_every_level_has_its_own_outlines_asset(self, tmp_path):
+        result = self._run(tmp_path)
+        detail_levels = result["detail_levels"]
+        assert set(detail_levels.keys()) == {"1", "2", "3", "4", "5"}
+        outline_paths = {lvl: data["outlines"] for lvl, data in detail_levels.items()}
+        # Each level renders to its own file — the frontend keys off
+        # detail_levels[level].outlines, so these must never collide.
+        assert len(set(outline_paths.values())) == 5, (
+            f"detail_levels must have 5 distinct outline file paths, got {outline_paths}"
+        )
+        for lvl, path in outline_paths.items():
+            assert Path(path).exists(), f"level {lvl} outlines file missing: {path}"
+
+    def test_detail_level_has_its_own_edge_maps_dict(self, tmp_path):
+        """DetailLevel.edge_maps must exist and be distinct from the global
+        manifest-level edge_maps — this is the field the frontend must read
+        for outline sublayer toggles instead of the global one."""
+        result = self._run(tmp_path)
+        detail_levels = result["detail_levels"]
+        for lvl, data in detail_levels.items():
+            assert "edge_maps" in data, f"level {lvl} missing edge_maps key entirely"
+        # At least one level must have a resolvable primary sublayer, and
+        # that file must be a real, level-specific asset (not the global one).
+        global_edge_maps = result.get("edge_maps", {})
+        found_level_specific = False
+        for lvl, data in detail_levels.items():
+            for type_name, path in data["edge_maps"].items():
+                assert Path(path).exists(), f"level {lvl} edge_maps[{type_name!r}] missing: {path}"
+                assert path not in global_edge_maps.values(), (
+                    f"level {lvl} edge_maps[{type_name!r}] must not reuse a global (non-level-aware) "
+                    f"edge_maps path — got {path}"
+                )
+                found_level_specific = True
+        assert found_level_specific, "no level produced any edge_maps at all — test image too trivial"
+
+    def test_level_1_and_level_5_outlines_differ(self, tmp_path):
+        """Changing the detail level must change what's rendered — this is
+        the concrete behaviour the frontend slider depends on."""
+        result = self._run(tmp_path)
+        l1_path = result["detail_levels"]["1"]["outlines"]
+        l5_path = result["detail_levels"]["5"]["outlines"]
+        l1_bytes = Path(l1_path).read_bytes()
+        l5_bytes = Path(l5_path).read_bytes()
+        # Different files entirely, and (for this two-region test image with
+        # texture only visible at finer levels) different pixel content too.
+        assert l1_path != l5_path
+        assert l1_bytes != l5_bytes, "Level 1 and Level 5 outlines must not be byte-identical"
+
+
 # ── A5: Real bounding boxes ───────────────────────────────────────────────────
 
 class TestRealBoundingBoxes:

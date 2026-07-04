@@ -245,13 +245,15 @@ class TestMediumsEndpoint:
 
 
 def test_outputs_dir_from_env(monkeypatch, tmp_path):
-    """OUTPUTS_DIR env var must propagate through to the path utility."""
-    monkeypatch.setenv("OUTPUTS_DIR", str(tmp_path))
-    # Re-import the module to pick up the new env var
-    import importlib
+    """OUTPUTS_DIR env var must propagate through to the path utility.
+
+    paths reads the env var at call time, so no importlib.reload() is needed —
+    the previous reload-based version baked tmp_path into the module for the
+    rest of the session (the "restore" reload ran while the env var was still
+    set), which made every later integration test write outputs to a stale
+    pytest tmp dir while reading from the real one.
+    """
     import backend.utils.paths as paths_module
-    importlib.reload(paths_module)
+    monkeypatch.setenv("OUTPUTS_DIR", str(tmp_path))
     assert paths_module.outputs_root() == tmp_path.resolve()
     assert paths_module.job_dir("abc123") == tmp_path.resolve() / "abc123"
-    # Restore
-    importlib.reload(paths_module)

@@ -1,28 +1,55 @@
 "use client";
-import { useState, useRef, DragEvent, ChangeEvent } from "react";
+import { useState, useRef, useEffect, DragEvent, ChangeEvent } from "react";
 import { useRouter } from "next/navigation";
 
+const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
 const MEDIUMS = [
-  { id: "oil",        label: "Oil Paint",    icon: "🎨" },
-  { id: "watercolor", label: "Watercolour",  icon: "💧" },
-  { id: "acrylic",    label: "Acrylic",      icon: "🖌️" },
-  { id: "pencil",     label: "Pencil",       icon: "✏️" },
-  { id: "charcoal",   label: "Charcoal",     icon: "🪨" },
+  { id: "oil",        label: "Oil Paint",   icon: "🎨", tip: "Rich blending, slow drying. Best for realism and portraiture." },
+  { id: "watercolor", label: "Watercolour", icon: "💧", tip: "Transparent layers. Work light-to-dark, preserve whites." },
+  { id: "acrylic",    label: "Acrylic",     icon: "🖌️", tip: "Fast-drying, versatile. Can mimic oil or watercolour." },
+  { id: "pencil",     label: "Pencil",      icon: "✏️", tip: "Graphite hatching. Build value through layered strokes." },
+  { id: "charcoal",   label: "Charcoal",    icon: "⬛", tip: "Broad marks, erasable highlights. Great for tonal studies." },
 ];
 
-const COLOR_COUNTS = [16, 24, 32, 48];
+const INITIAL_VIEW_LEVELS = [
+  { value: 1, label: "Foundation",    desc: "Basic shapes + primary contours only. Best for beginners." },
+  { value: 2, label: "Simplified",    desc: "Major forms + key shadows. Quick study." },
+  { value: 3, label: "Standard",      desc: "Balanced detail + colour zones. Most paintings." },
+  { value: 4, label: "Detailed",      desc: "Fine regions, decorative elements, texture." },
+  { value: 5, label: "Full Reference",desc: "Every detected layer — complete hierarchical breakdown." },
+];
+
+const VALUE_ZONE_OPTIONS = [3, 5, 7] as const;
 
 export default function HomePage() {
-  const router = useRouter();
-  const inputRef = useRef<HTMLInputElement>(null);
+  const router    = useRouter();
+  const inputRef  = useRef<HTMLInputElement>(null);
 
-  const [file, setFile]           = useState<File | null>(null);
-  const [preview, setPreview]     = useState<string | null>(null);
-  const [medium, setMedium]       = useState("oil");
-  const [nColors, setNColors]     = useState(32);
-  const [dragging, setDragging]   = useState(false);
-  const [loading, setLoading]     = useState(false);
-  const [error, setError]         = useState<string | null>(null);
+  const [file,        setFile]        = useState<File | null>(null);
+  const [preview,     setPreview]     = useState<string | null>(null);
+  const [medium,      setMedium]      = useState("oil");
+  const [paletteSize, setPaletteSize] = useState(12);
+  const [initialViewLevel, setInitialViewLevel] = useState(3);
+  const [valueZones,  setValueZones]  = useState<3 | 5 | 7>(5);
+  const [regionComplexity, setRegionComplexity] = useState(3);
+  const [textureDetail, setTextureDetail] = useState(true);
+  const [bgDetail,      setBgDetail]      = useState(false);
+  const [dragging,    setDragging]    = useState(false);
+  const [loading,     setLoading]     = useState(false);
+  const [error,       setError]       = useState<string | null>(null);
+
+  useEffect(() => {
+    const api = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    fetch(`${api}/mediums/${medium}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data) return;
+        setPaletteSize(data.recommended_palette_size ?? paletteSize);
+        setValueZones(data.recommended_value_zones ?? valueZones);
+      })
+      .catch(() => {});
+  }, [medium]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleFile(f: File) {
     if (!f.type.startsWith("image/")) {
@@ -52,16 +79,20 @@ export default function HomePage() {
     setError(null);
     try {
       const form = new FormData();
-      form.append("file", file);
-      form.append("medium", medium);
-      form.append("n_colors", String(nColors));
+      form.append("file",         file);
+      form.append("medium",       medium);
+      form.append("palette_size", String(paletteSize));
+      form.append("initial_view_level", String(initialViewLevel));
+      form.append("value_zones",  String(valueZones));
+      form.append("region_complexity",  String(regionComplexity));
+      form.append("texture_detail",    String(textureDetail));
+      form.append("background_detail", String(bgDetail));
 
-      const res = await fetch("http://localhost:8000/jobs/", {
-        method: "POST",
-        body: form,
-      });
-
-      if (!res.ok) throw new Error(`Server error: ${res.status}`);
+      const res = await fetch(`${API}/jobs/`, { method: "POST", body: form });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.detail ?? `Server error: ${res.status}`);
+      }
       const data = await res.json();
       router.push(`/results/${data.job_id}`);
     } catch (err: unknown) {
@@ -70,18 +101,21 @@ export default function HomePage() {
     }
   }
 
+  const selectedMedium = MEDIUMS.find(m => m.id === medium);
+  const selectedDetail = INITIAL_VIEW_LEVELS.find(d => d.value === initialViewLevel);
+
   return (
     <main className="min-h-screen flex flex-col items-center justify-center px-4 py-16"
           style={{ background: "var(--bg)" }}>
 
       {/* Header */}
-      <div className="text-center mb-12">
+      <div className="text-center mb-10">
         <h1 className="text-4xl font-bold mb-3" style={{ color: "var(--accent)" }}>
           Painting Instructor
         </h1>
         <p className="text-lg max-w-md mx-auto" style={{ color: "var(--text-dim)" }}>
-          Upload a photo. We break it down into every step a painter needs —
-          outlines, values, colours, and a progressive video tutorial.
+          Upload a reference photo. Get a structured, step-by-step painting lesson —
+          hierarchical layers from basic shapes to full detail.
         </p>
       </div>
 
@@ -97,7 +131,7 @@ export default function HomePage() {
           style={{
             borderColor: dragging ? "var(--accent)" : "var(--border)",
             background:  dragging ? "rgba(200,150,90,0.05)" : "var(--surface)",
-            minHeight: preview ? "auto" : 220,
+            minHeight:   preview  ? "auto" : 200,
           }}
         >
           {preview ? (
@@ -113,69 +147,142 @@ export default function HomePage() {
               </p>
             </div>
           )}
-          <input
-            ref={inputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={onChange}
-          />
+          <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={onChange} />
         </div>
 
         {preview && (
-          <button
-            className="text-sm underline"
-            style={{ color: "var(--text-dim)" }}
-            onClick={() => { setFile(null); setPreview(null); }}
-          >
+          <button className="text-sm underline" style={{ color: "var(--text-dim)" }}
+                  onClick={() => { setFile(null); setPreview(null); }}>
             Choose a different photo
           </button>
         )}
 
-        {/* Medium */}
+        {/* Medium selector */}
         <div>
           <label className="block text-sm font-medium mb-3" style={{ color: "var(--text-dim)" }}>
             Painting medium
           </label>
           <div className="flex flex-wrap gap-2">
             {MEDIUMS.map(m => (
-              <button
-                key={m.id}
-                onClick={() => setMedium(m.id)}
-                className="px-4 py-2 rounded-lg border text-sm font-medium transition-colors"
-                style={{
-                  background:   medium === m.id ? "var(--accent)" : "var(--surface)",
-                  color:        medium === m.id ? "#0f0e0d"       : "var(--text)",
-                  borderColor:  medium === m.id ? "var(--accent)" : "var(--border)",
-                }}
-              >
+              <button key={m.id} onClick={() => setMedium(m.id)}
+                      className="px-4 py-2 rounded-lg border text-sm font-medium transition-colors"
+                      style={{
+                        background:  medium === m.id ? "var(--accent)" : "var(--surface)",
+                        color:       medium === m.id ? "#0f0e0d"       : "var(--text)",
+                        borderColor: medium === m.id ? "var(--accent)" : "var(--border)",
+                      }}>
                 {m.icon} {m.label}
               </button>
             ))}
           </div>
+          {selectedMedium && (
+            <p className="text-xs mt-2" style={{ color: "var(--text-dim)" }}>{selectedMedium.tip}</p>
+          )}
         </div>
 
-        {/* Colour count */}
+        {/* Palette size */}
         <div>
           <label className="block text-sm font-medium mb-3" style={{ color: "var(--text-dim)" }}>
-            Palette size — {nColors} colours
+            Palette size — <span style={{ color: "var(--accent)" }}>{paletteSize} colours</span>
+          </label>
+          <input type="range" min={6} max={32} step={2} value={paletteSize}
+                 onChange={e => setPaletteSize(Number(e.target.value))}
+                 className="w-full accent-yellow-600" />
+          <div className="flex justify-between text-xs mt-1" style={{ color: "var(--text-dim)" }}>
+            <span>6 (minimal)</span><span>32 (detailed)</span>
+          </div>
+        </div>
+
+        {/* Value zones */}
+        <div>
+          <label className="block text-sm font-medium mb-3" style={{ color: "var(--text-dim)" }}>
+            Value zones
           </label>
           <div className="flex gap-2">
-            {COLOR_COUNTS.map(n => (
-              <button
-                key={n}
-                onClick={() => setNColors(n)}
-                className="px-4 py-2 rounded-lg border text-sm font-medium transition-colors"
-                style={{
-                  background:  nColors === n ? "var(--accent)" : "var(--surface)",
-                  color:       nColors === n ? "#0f0e0d"       : "var(--text)",
-                  borderColor: nColors === n ? "var(--accent)" : "var(--border)",
-                }}
-              >
-                {n}
+            {VALUE_ZONE_OPTIONS.map(n => (
+              <button key={n} onClick={() => setValueZones(n)}
+                      className="px-5 py-2 rounded-lg border text-sm font-medium transition-colors"
+                      style={{
+                        background:  valueZones === n ? "var(--accent)" : "var(--surface)",
+                        color:       valueZones === n ? "#0f0e0d"       : "var(--text)",
+                        borderColor: valueZones === n ? "var(--accent)" : "var(--border)",
+                      }}>
+                {n} zones
               </button>
             ))}
           </div>
+          <p className="text-xs mt-2" style={{ color: "var(--text-dim)" }}>
+            3 = shadow / midtone / light &nbsp;·&nbsp; 5 = standard &nbsp;·&nbsp; 7 = maximum tonal range
+          </p>
+        </div>
+
+        {/* Initial view level */}
+        <div>
+          <label className="block text-sm font-medium mb-3" style={{ color: "var(--text-dim)" }}>
+            Starting view level
+          </label>
+          <div className="flex flex-wrap gap-2">
+            {INITIAL_VIEW_LEVELS.map(d => (
+              <button key={d.value} onClick={() => setInitialViewLevel(d.value)}
+                      className="px-3 py-2 rounded-lg border text-sm font-medium transition-colors"
+                      style={{
+                        background:  initialViewLevel === d.value ? "var(--accent)" : "var(--surface)",
+                        color:       initialViewLevel === d.value ? "#0f0e0d"       : "var(--text)",
+                        borderColor: initialViewLevel === d.value ? "var(--accent)" : "var(--border)",
+                      }}>
+                {d.label}
+              </button>
+            ))}
+          </div>
+          {selectedDetail && (
+            <p className="text-xs mt-2" style={{ color: "var(--text-dim)" }}>{selectedDetail.desc}</p>
+          )}
+          <p className="text-xs mt-1" style={{ color: "var(--text-dim)" }}>
+            All 5 levels are always generated — this only picks which one opens first.
+          </p>
+        </div>
+
+        {/* Region complexity */}
+        <div>
+          <label className="block text-sm font-medium mb-3" style={{ color: "var(--text-dim)" }}>
+            Region complexity — <span style={{ color: "var(--accent)" }}>
+              {["", "Minimal", "Simplified", "Balanced", "Detailed", "Maximum"][regionComplexity]}
+            </span>
+          </label>
+          <input type="range" min={1} max={5} step={1} value={regionComplexity}
+                 onChange={e => setRegionComplexity(Number(e.target.value))}
+                 className="w-full accent-yellow-600" />
+          <div className="flex justify-between text-xs mt-1" style={{ color: "var(--text-dim)" }}>
+            <span>1 (fewer, broader)</span><span>5 (more, finer)</span>
+          </div>
+          <p className="text-xs mt-1" style={{ color: "var(--text-dim)" }}>
+            Controls how many superpixels seed the hierarchy. Higher = more regions per level.
+          </p>
+        </div>
+
+        {/* Texture + background detail toggles */}
+        <div className="flex gap-6">
+          {[
+            { label: "Texture edges",    checked: textureDetail, set: setTextureDetail,
+              tip: "Include high-frequency texture contours (fabric, bark, fur)." },
+            { label: "Background edges", checked: bgDetail,      set: setBgDetail,
+              tip: "Analyse edges behind the main subject." },
+          ].map(({ label, checked, set, tip }) => (
+            <label key={label} className="flex items-center gap-3 cursor-pointer select-none">
+              <button
+                role="switch" aria-checked={checked}
+                onClick={() => set(!checked)}
+                className="relative w-10 h-6 rounded-full transition-colors"
+                style={{ background: checked ? "var(--accent)" : "var(--surface)", border: "1px solid var(--border)" }}>
+                <span className="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform"
+                      style={{ transform: checked ? "translateX(16px)" : "translateX(0)" }} />
+              </button>
+              <span className="text-sm" style={{ color: checked ? "var(--text)" : "var(--text-dim)" }}>
+                {label}
+              </span>
+              <span className="hidden sm:inline text-xs" style={{ color: "var(--text-dim)" }}>{tip}</span>
+            </label>
+          ))}
         </div>
 
         {/* Error */}
@@ -186,19 +293,17 @@ export default function HomePage() {
         )}
 
         {/* Submit */}
-        <button
-          onClick={submit}
-          disabled={!file || loading}
-          className="w-full py-4 rounded-xl font-semibold text-base transition-all"
-          style={{
-            background: (!file || loading) ? "var(--accent-dim)" : "var(--accent)",
-            color: "#0f0e0d",
-            cursor: (!file || loading) ? "not-allowed" : "pointer",
-            opacity: (!file || loading) ? 0.7 : 1,
-          }}
-        >
+        <button onClick={submit} disabled={!file || loading}
+                className="w-full py-4 rounded-xl font-semibold text-base transition-all"
+                style={{
+                  background: (!file || loading) ? "var(--accent-dim)" : "var(--accent)",
+                  color:  "#0f0e0d",
+                  cursor: (!file || loading) ? "not-allowed" : "pointer",
+                  opacity:(!file || loading) ? 0.7 : 1,
+                }}>
           {loading ? "Uploading…" : "Generate Tutorial →"}
         </button>
+
       </div>
     </main>
   );

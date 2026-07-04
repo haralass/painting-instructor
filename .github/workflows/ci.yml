@@ -1,0 +1,215 @@
+name: CI
+
+on:
+  push:
+    branches: ["feature/**", "main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  backend-tests:
+    name: Backend — Python tests
+    runs-on: ubuntu-latest
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run unit tests (no slow/ML tests)
+        run: python -m pytest tests/test_api.py tests/test_analysis.py -v --tb=short -m "not slow" -q
+        env:
+          REDIS_URL: redis://localhost:6379/0
+          OUTPUTS_DIR: /tmp/test-outputs
+
+  integration-tests:
+    name: Backend — Full-pipeline integration test
+    runs-on: ubuntu-latest
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run full-pipeline integration test (upload -> worker -> manifest -> PDF -> video)
+        run: python -m pytest tests/test_integration.py -v --tb=short -q
+        env:
+          REDIS_URL: redis://localhost:6379/0
+          OUTPUTS_DIR: /tmp/test-outputs-integration
+
+  frontend-typecheck:
+    name: Frontend — TypeScript type-check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Type-check
+        run: npx tsc --noEmit
+        working-directory: frontend
+
+  frontend-build:
+    name: Frontend — Production build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Production build
+        run: npm run build
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+
+  lint:
+    name: Backend — Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install ruff
+        run: pip install ruff
+      - name: Lint
+        run: ruff check backend/ --ignore E501,E402,F401,E741
+
+  security-checks:
+    name: Security — secrets, large files, model weights
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Secret scan
+        run: |
+          python3 - <<'PYEOF'
+          import pathlib
+          import re
+          import sys
+
+          PATTERNS = {
+              "AWS access key":        re.compile(r"AKIA[0-9A-Z]{16}"),
+              "Private key block":     re.compile(r"-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----"),
+              "GitHub token":          re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"),
+              "Slack token":           re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}"),
+              "Generic hardcoded secret": re.compile(
+                  r"""(?i)(api[_-]?key|secret|token|password)\s*[:=]\s*["'][A-Za-z0-9/+_\-]{16,}["']"""
+              ),
+          }
+          SKIP_DIRS = {".git", "node_modules", "__pycache__", ".next", "venv", ".venv", "outputs"}
+          SKIP_FILES = {".env.example"}
+
+          findings = []
+          for path in pathlib.Path(".").rglob("*"):
+              if not path.is_file():
+                  continue
+              if any(part in SKIP_DIRS for part in path.parts):
+                  continue
+              if path.name in SKIP_FILES:
+                  continue
+              try:
+                  text = path.read_text(errors="ignore")
+              except Exception:
+                  continue
+              for name, pattern in PATTERNS.items():
+                  for m in pattern.finditer(text):
+                      line_no = text.count("\n", 0, m.start()) + 1
+                      findings.append(f"{path}:{line_no}: {name}")
+
+          if findings:
+              print("ERROR: possible secrets found:")
+              for f in findings:
+                  print(" ", f)
+              sys.exit(1)
+          print(f"Secret scan: OK")
+          PYEOF
+
+      - name: Large file check (>10MB)
+        run: |
+          large=$(find . -not -path './.git/*' -not -path '*/node_modules/*' \
+            -not -path './outputs/*' -not -path './frontend/.next/*' \
+            -type f -size +10M 2>/dev/null)
+          if [ -n "$large" ]; then
+            echo "ERROR: Large file(s) detected (>10MB):"
+            echo "$large"
+            exit 1
+          fi
+          echo "Large file check: OK"
+
+      - name: Model weight check
+        run: |
+          # This repo downloads ML models (kornia/DexiNed, controlnet_aux,
+          # facexlib, rembg) into local caches at runtime — none of those
+          # weight files should ever be committed to the repo itself.
+          weights=$(find . \
+            -not -path './.git/*' \
+            -not -path '*/node_modules/*' \
+            -not -path './outputs/*' \
+            \( -name "*.safetensors" -o -name "*.gguf" -o -name "*.ggml" \
+               -o -name "*.pt" -o -name "*.pth" -o -name "*.ckpt" -o -name "*.onnx" \) \
+            2>/dev/null)
+          large_bin=$(find . \
+            -not -path './.git/*' -not -path '*/node_modules/*' -not -path './outputs/*' \
+            -name "*.bin" -size +50M 2>/dev/null)
+          all="${weights}${large_bin}"
+          if [ -n "$all" ]; then
+            echo "ERROR: Model weight or forbidden binary file(s) committed to the repo:"
+            echo "$all"
+            exit 1
+          fi
+          echo "Model weight check: OK"

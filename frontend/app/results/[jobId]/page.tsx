@@ -152,6 +152,7 @@ type Manifest = {
   video?: string;
   video_chapters?: { order: number; name: string; start_sec: number }[];
   pdf?: string;
+  personal_observations?: string | null;
   status?: string;  // A3: "analysis_ready" when progressive delivery is active
 };
 
@@ -491,6 +492,19 @@ export default function ResultsPage() {
 
         {/* ── Centre: video + main image + controls ───────────────────────── */}
         <section className="flex-1 flex flex-col overflow-y-auto min-w-0">
+
+          {/* About Your Image — grounded in this job's own analysis (Claude
+              vision call), not a per-medium template. Absent entirely when
+              ANTHROPIC_API_KEY isn't configured on the backend. */}
+          {manifest?.personal_observations && (
+            <div className="p-4 border-b flex-shrink-0" style={{ borderColor: "var(--border)" }}>
+              <p className="text-xs font-semibold uppercase tracking-widest mb-2"
+                 style={{ color: "var(--text-dim)" }}>About Your Image</p>
+              <p className="text-sm leading-relaxed" style={{ color: "var(--text)" }}>
+                {manifest.personal_observations}
+              </p>
+            </div>
+          )}
 
           {/* Video — A3: show pending state during progressive delivery */}
           <div className="p-4 border-b flex-shrink-0" style={{ borderColor: "var(--border)" }}>

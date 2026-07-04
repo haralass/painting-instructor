@@ -37,6 +37,7 @@ def build_tutorial_pdf(
     palette: list[dict],
     value_zone_list: list[dict],
     classic_pages: list[str],
+    personal_observations: str | None = None,
 ) -> str:
     """
     Assemble the tutorial book: cover, palette, value zones, level-by-level
@@ -94,6 +95,13 @@ def build_tutorial_pdf(
     pdf.ln(16)
     if reference_path and Path(reference_path).exists():
         pdf.image(reference_path, x=MARGIN + 30, w=CONTENT_W - 60)
+
+    # ── 1b. About this image — grounded in this job's own analysis, not a
+    #    per-medium template like everything else in this book ──────────────
+    if personal_observations:
+        pdf.add_page()
+        _heading("About Your Image")
+        _body(personal_observations)
 
     # ── 2. Palette ─────────────────────────────────────────────────────────
     if palette:

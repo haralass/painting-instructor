@@ -34,6 +34,7 @@ _PROGRESS = {
     "dot_to_dot":       65,
     "hierarchical":     75,
     "analysis_ready":   80,   # NEW — preliminary manifest written
+    "observations":     82,
     "rendering_extras": 85,   # NEW — starting video/PDF
     "video":            88,
     "pdf":              93,
@@ -88,6 +89,7 @@ def run_pipeline(
     from ..teaching.mediums import get_medium
     from ..teaching.lesson import build_lesson_plan
     from ..teaching.pdf_book import build_tutorial_pdf
+    from ..teaching.observations import generate_observations
 
     # Resolve backward-compat alias
     if n_colors and not palette_size:
@@ -114,6 +116,7 @@ def run_pipeline(
             "dot_to_dot":       "Placing structural dots",
             "hierarchical":     "Building hierarchical regions",
             "analysis_ready":   "Analysis complete — generating extras",
+            "observations":     "Looking at your image",
             "rendering_extras": "Rendering video and PDF",
             "video":            "Rendering tutorial video",
             "pdf":              "Assembling PDF book",
@@ -300,6 +303,28 @@ def run_pipeline(
         classic_pages=classic_pages,
     )
 
+    # ── Step 9b: Personal observations — one vision call grounded in this
+    #    job's actual palette/value zones/region count, unlike every other
+    #    piece of teaching copy which is a static per-medium template. No-ops
+    #    (returns None) when ANTHROPIC_API_KEY isn't configured. ──────────────
+    progress("observations")
+    personal_observations = None
+    try:
+        t0 = time.perf_counter()
+        personal_observations = generate_observations(
+            reference_path=ref_path,
+            medium=medium,
+            medium_cfg=medium_cfg,
+            palette=hier.get("palette", []),
+            value_zone_list=hier.get("value_zone_list", []),
+            region_count=hier.get("n_regions", 0),
+        )
+        timings["observations"] = round(time.perf_counter() - t0, 2)
+    except Exception:
+        tb = traceback.format_exc()
+        errors["observations"] = tb
+        log.warning("Personal observations failed:\n%s", tb)
+
     # ── Step 10: Video — chapters follow the medium's real teaching stages ────
     progress("rendering_extras")
     video_path = None
@@ -345,6 +370,7 @@ def run_pipeline(
             palette=hier.get("palette", []),
             value_zone_list=hier.get("value_zone_list", []),
             classic_pages=classic_pages,
+            personal_observations=personal_observations,
         )
         timings["pdf"] = round(time.perf_counter() - t0, 2)
     except Exception:
@@ -373,6 +399,7 @@ def run_pipeline(
         texture_detail=texture_detail,
         background_detail=background_detail,
         video_chapters=video_chapters,
+        personal_observations=personal_observations,
     )
     manifest_path.write_text(json.dumps(manifest, indent=2))
 
@@ -469,6 +496,7 @@ def _build_manifest(
     texture_detail: bool = True,
     background_detail: bool = False,
     video_chapters: list[dict] | None = None,
+    personal_observations: str | None = None,
 ) -> dict:
     w, h = img.size
 
@@ -508,6 +536,7 @@ def _build_manifest(
         "video":  rel_to_outputs(video_path),
         "video_chapters": video_chapters or [],
         "pdf":    rel_to_outputs(pdf_path),
+        "personal_observations": personal_observations,
         "timings": timings,
         "errors": {k: v[:300] for k, v in errors.items()},  # truncate for JSON
     }

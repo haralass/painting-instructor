@@ -218,12 +218,18 @@ export default function ResultsPage() {
 
   const pollRef  = useRef<ReturnType<typeof setInterval> | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  // Tracks whether the manifest has been fetched, without making `poll`'s
+  // identity depend on manifest state — otherwise every fetch creates a new
+  // `poll` reference, which re-fires the polling effect below and refetches
+  // immediately, in an unthrottled loop instead of the intended 2.5s cadence.
+  const manifestLoadedRef = useRef(false);
 
   const fetchManifest = useCallback(async (manifestUrl: string) => {
     try {
       const res = await fetch(absUrl(manifestUrl));
       if (res.ok) {
         const data: Manifest = await res.json();
+        manifestLoadedRef.current = true;
         setManifest(data);
 
         const ps: AnalysisPage[] = (data.pages ?? []).map(p => {
@@ -232,13 +238,13 @@ export default function ResultsPage() {
           return { key, url: outputUrl(p), ...meta };
         }).filter(p => CLASSIC_PAGE_KEYS.includes(p.key));
         setClassicPages(ps);
-        if (ps.length > 0 && !selected) setSelected(ps[0]);
+        if (ps.length > 0) setSelected(prev => prev ?? ps[0]);
 
         // Set default viewing level from the initial_view_level the user picked at upload
         if (data.input?.initial_view_level) setDetailLevel(data.input.initial_view_level);
       }
     } catch { /* non-critical */ }
-  }, [selected]);
+  }, []);
 
   const poll = useCallback(async () => {
     try {
@@ -248,13 +254,13 @@ export default function ResultsPage() {
 
       if ((data.status === "completed" || data.status === "completed_with_warnings") && data.result?.manifest) {
         if (pollRef.current) clearInterval(pollRef.current);
-        await fetchManifest(data.result.manifest);
-      } else if (data.analysis_ready && !manifest) {
+        if (!manifestLoadedRef.current) await fetchManifest(data.result.manifest);
+      } else if (data.analysis_ready && !manifestLoadedRef.current) {
         // A3: Progressive delivery — fetch manifest while video/PDF still rendering
         await fetchManifest(`/outputs/${jobId}/manifest.json`);
       }
     } catch { /* backend unreachable */ }
-  }, [jobId, fetchManifest, manifest]);
+  }, [jobId, fetchManifest]);
 
   useEffect(() => {
     poll();

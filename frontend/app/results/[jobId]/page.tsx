@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -288,12 +289,24 @@ export default function ResultsPage() {
     return (
       <main className="min-h-screen flex flex-col items-center justify-center px-4"
             style={{ background: "var(--bg)" }}>
-        <div className="text-center max-w-md">
+        <div className="text-center max-w-md fade-up">
           {isRunning && (
             <>
-              <div className="text-5xl mb-6 animate-pulse">🎨</div>
-              <h2 className="text-2xl font-bold mb-3" style={{ color: "var(--accent)" }}>
-                Preparing your tutorial
+              {/* Paint blobs mixing — staggered pulse */}
+              <div className="flex items-center justify-center gap-3 mb-8">
+                {["#dca55e", "#bf5b45", "#7d92ab"].map((c, i) => (
+                  <span key={c} className="blob-pulse inline-block rounded-full"
+                        style={{
+                          width: 22 + (i === 1 ? 10 : 0), height: 22 + (i === 1 ? 10 : 0),
+                          background: `radial-gradient(circle at 35% 30%, ${c}, ${c}88)`,
+                          boxShadow: `0 0 24px ${c}55`,
+                          animationDelay: `${i * 0.35}s`,
+                        }} />
+                ))}
+              </div>
+              <p className="eyebrow mb-3">Analysing your reference</p>
+              <h2 className="font-display text-3xl mb-4" style={{ color: "var(--text)" }}>
+                Preparing your <em className="text-gradient">tutorial</em>
               </h2>
               <p className="text-base mb-2" style={{ color: "var(--text)" }}>
                 {STEP_LABELS[jobStatus.step] ?? jobStatus.message ?? "Processing…"}
@@ -302,18 +315,22 @@ export default function ResultsPage() {
                 {jobStatus.progress > 0 ? `${jobStatus.progress}% complete` : "Starting…"}
               </p>
               <div className="h-2 w-full rounded-full overflow-hidden" style={{ background: "var(--border)" }}>
-                <div className="h-full rounded-full transition-all duration-700"
-                     style={{ background: "var(--accent)", width: `${Math.max(jobStatus.progress, 4)}%` }} />
+                <div className="h-full rounded-full progress-shimmer transition-all duration-700"
+                     style={{ width: `${Math.max(jobStatus.progress, 4)}%` }} />
               </div>
             </>
           )}
           {jobStatus.status === "failed" && (
             <>
-              <div className="text-5xl mb-6">❌</div>
-              <h2 className="text-2xl font-bold mb-2">Processing failed</h2>
+              <div className="w-14 h-14 mx-auto mb-6 rounded-full flex items-center justify-center"
+                   style={{ background: "rgba(191,91,69,0.15)", border: "1px solid rgba(191,91,69,0.4)", color: "#e0876f", fontSize: 22 }}>
+                ✕
+              </div>
+              <h2 className="font-display text-3xl mb-2" style={{ color: "var(--text)" }}>Processing failed</h2>
               <p style={{ color: "var(--text-dim)" }}>{jobStatus.error ?? "Unknown error"}</p>
-              <a href="/" className="mt-6 inline-block px-4 py-2 rounded-lg text-sm"
-                 style={{ background: "var(--accent)", color: "#0f0e0d" }}>← Try again</a>
+              <Link href="/" className="btn-primary mt-8 inline-flex" style={{ padding: "12px 24px", fontSize: 14, textDecoration: "none" }}>
+                ← Try again
+              </Link>
             </>
           )}
         </div>
@@ -383,8 +400,10 @@ export default function ResultsPage() {
 
       {/* ── Top bar ─────────────────────────────────────────────────────────── */}
       <header className="flex items-center justify-between px-6 py-4 border-b flex-shrink-0"
-              style={{ borderColor: "var(--border)" }}>
-        <a href="/" className="font-bold text-lg" style={{ color: "var(--accent)" }}>← New Tutorial</a>
+              style={{ borderColor: "var(--border)", background: "linear-gradient(to bottom, rgba(25,21,18,0.6), transparent)" }}>
+        <Link href="/" className="font-display text-lg" style={{ color: "var(--text)", textDecoration: "none" }}>
+          <span style={{ color: "var(--accent)" }}>←</span> Painting <em style={{ color: "var(--accent)" }}>Instructor</em>
+        </Link>
 
         {/* A3: Progressive delivery banner */}
         {isAnalysisReady && (
@@ -402,25 +421,21 @@ export default function ResultsPage() {
           )}
           {pdfReady ? (
             <a href={absUrl(manifest!.pdf!)} target="_blank" rel="noreferrer"
-               className="px-4 py-2 rounded-lg border transition-colors"
-               style={{ borderColor: "var(--border)", color: "var(--text-dim)" }}>
+               className="btn-ghost" style={{ padding: "9px 18px", fontSize: 13, textDecoration: "none" }}>
               Download PDF
             </a>
           ) : (
-            <span className="px-4 py-2 rounded-lg border"
-                  style={{ borderColor: "var(--border)", color: "var(--text-dim)", opacity: 0.4 }}>
+            <span className="btn-ghost" style={{ padding: "9px 18px", fontSize: 13, opacity: 0.4, cursor: "default" }}>
               PDF rendering…
             </span>
           )}
           {videoReady ? (
             <a href={absUrl(manifest!.video!)} download
-               className="px-4 py-2 rounded-lg font-semibold"
-               style={{ background: "var(--accent)", color: "#0f0e0d" }}>
+               className="btn-primary" style={{ padding: "9px 18px", fontSize: 13, textDecoration: "none" }}>
               Download Video
             </a>
           ) : (
-            <span className="px-4 py-2 rounded-lg font-semibold"
-                  style={{ background: "var(--surface)", color: "var(--text-dim)", opacity: 0.4 }}>
+            <span className="btn-primary" style={{ padding: "9px 18px", fontSize: 13, opacity: 0.4, cursor: "default", filter: "saturate(0.4)" }}>
               Video rendering…
             </span>
           )}
@@ -846,7 +861,9 @@ function LayerStack({
     : {};
 
   return (
-    <div style={{ position: "relative", width: "100%", maxHeight, overflow: "hidden", borderRadius: 12, ...aspectStyle }}>
+    <div key={assets.join("|")}
+         className="layer-transition"
+         style={{ position: "relative", width: "100%", maxHeight, overflow: "hidden", borderRadius: 12, ...aspectStyle }}>
       {assets.map((url, i) => (
         <img
           key={url}

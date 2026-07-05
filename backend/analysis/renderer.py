@@ -482,3 +482,68 @@ def _composite_all_edge_maps(maps: dict[str, np.ndarray]) -> np.ndarray:
         if m is not None:
             base = np.maximum(base, m)
     return 255 - base
+
+
+def render_paint_by_numbers(
+    label_maps: dict[str, np.ndarray],
+    regions: list[Region],
+    palette,
+    out_path,
+    level_scale: str = "l4",
+) -> str | None:
+    """
+    Paint-by-numbers page generated from the merge-tree hierarchy itself,
+    so its regions are the SAME masses the lesson teaches. The previous
+    standalone RAG cut_threshold implementation chain-merged soft-edged
+    photos (sky↔land through a hazy horizon) into one giant region.
+
+    Each l4 region is tinted toward white with its palette colour and
+    numbered with that colour's palette index; boundaries are drawn from
+    the label map directly.
+    """
+    from PIL import ImageDraw
+    from skimage.segmentation import find_boundaries
+    from ..utils.fonts import get_font
+
+    lm = label_maps.get(level_scale)
+    if lm is None and label_maps:
+        level_scale, lm = sorted(label_maps.items())[-1]
+    if lm is None:
+        return None
+
+    regs = [r for r in regions if r.scale == level_scale]
+    if not regs:
+        return None
+
+    H, W = lm.shape
+    max_lbl = int(lm.max())
+    pal_rgb = {p.id: tuple(p.base_rgb) for p in palette}
+    n_pal = max(len(palette), 1)
+
+    lut = np.full((max_lbl + 1, 3), 255, dtype=np.uint8)
+    for r in regs:
+        rgb = pal_rgb.get(r.colour_family_id, tuple(r.mean_rgb))
+        tint = tuple(int(c + (255 - c) * 0.45) for c in rgb)
+        if 0 <= r.source_label <= max_lbl:
+            lut[r.source_label] = tint
+
+    out = lut[lm]
+    out[find_boundaries(lm, mode="thick")] = (70, 66, 60)
+
+    img = Image.fromarray(out)
+    dr = ImageDraw.Draw(img)
+    font = get_font(max(10, min(H, W) // 60))
+    min_area_for_number = H * W * 0.0008
+    for r in regs:
+        if r.area < min_area_for_number:
+            continue
+        # Region.centroid is stored (x, y)
+        cx, cy = r.centroid if len(r.centroid) == 2 else (W / 2, H / 2)
+        number = (r.colour_family_id % n_pal) + 1
+        rgb = pal_rgb.get(r.colour_family_id, (128, 128, 128))
+        lum = 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]
+        colour = (40, 38, 34) if lum > 100 else (30, 28, 25)
+        dr.text((float(cx) - 4, float(cy) - 6), str(number), fill=colour, font=font)
+
+    img.save(str(out_path))
+    return str(out_path)

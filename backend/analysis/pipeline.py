@@ -149,6 +149,23 @@ def run_hierarchical_analysis(
         level_edge_maps=level_edge_maps,  # level-aware outline source (see above)
     )
 
+    # ── 5b. Paint-by-numbers from the SAME hierarchy the lesson teaches ──────
+    # Overwrites the classic standalone page (when that step produced one):
+    # one segmentation everywhere keeps the guides consistent with the
+    # lesson's masses, and the merge tree doesn't chain-merge soft horizons
+    # the way the old RAG cut_threshold did.
+    from .renderer import render_paint_by_numbers
+    pbn_path: str | None = None
+    try:
+        pbn_path = render_paint_by_numbers(
+            label_maps=label_maps,
+            regions=regions,
+            palette=palette,
+            out_path=out_dir / "color_by_number.png",
+        )
+    except Exception:
+        log.warning("render_paint_by_numbers failed", exc_info=True)
+
     # ── 6. Write regions JSON ─────────────────────────────────────────────────
     regions_path = out_dir / "regions.json"
     regions_path.write_text(json.dumps(
@@ -210,4 +227,5 @@ def run_hierarchical_analysis(
         "label_to_region_id":  label_to_region_id,
         "edge_maps":           _edge_map_paths,  # A4: individual maps for frontend sublayer toggles
         "outline_composites":  _outline_composite_paths,  # global composites for lesson_plan resolution
+        "paint_by_numbers":    pbn_path,   # hierarchy-based page (replaces classic when both exist)
     }

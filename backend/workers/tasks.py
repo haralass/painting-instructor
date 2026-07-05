@@ -270,6 +270,12 @@ def run_pipeline(
         raise RuntimeError(f"Critical hierarchical analysis failed:\n{tb}")
     hier = hier or {}
 
+    # Hierarchy-based paint-by-numbers replaces the classic page; if the
+    # classic step failed (no ML deps) it was never in `pages`, so add it.
+    pbn_path = hier.get("paint_by_numbers")
+    if pbn_path and not any(Path(p).name == "color_by_number.png" for p in pages):
+        pages.append(pbn_path)
+
     # ── Step 9a: Image brief — the personal part of the lesson. Deterministic,
     #    derived entirely from this job's own analysis data: which masses to
     #    block in first, where the light comes from, where the focal point is,

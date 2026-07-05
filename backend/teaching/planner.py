@@ -117,6 +117,8 @@ def build_image_brief(
     for r in l1[:8]:
         cx, cy = _norm_centroid(r)
         area_frac = r.get("area", 0) / total_px
+        if area_frac < 0.02:
+            continue  # sub-2% slivers are noise, not paintable masses
         masses.append({
             "region_id":   r.get("id"),
             "location":    _loc_word(cx, cy),

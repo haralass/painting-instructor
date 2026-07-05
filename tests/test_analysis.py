@@ -593,24 +593,48 @@ class TestEdgeRegionIDMapping:
         assert len(inter_region) > 0, "No inter-region edges found"
 
 
+def _banded_image(n_bands: int = 7, size: int = 140) -> "Image.Image":
+    """n_bands horizontal luminance bands — genuine value MASSES, unlike raw
+    noise. The value pipeline now simplifies by design (a value study is a
+    mass plan, not per-pixel posterisation), so pure-noise inputs correctly
+    collapse — distinct masses must survive."""
+    from PIL import Image
+    import numpy as np
+    arr = np.zeros((size, size, 3), dtype=np.uint8)
+    band_h = size // n_bands
+    for i in range(n_bands):
+        lum = int(10 + 235 * i / (n_bands - 1))
+        arr[i * band_h:(i + 1) * band_h if i < n_bands - 1 else size] = lum
+    return Image.fromarray(arr)
+
+
 class TestNotan7Zones:
     def test_notan_7_zones_produces_7_grey_levels(self):
         from backend.pipeline.artist_breakdown.processor import notan
-        from PIL import Image
         import numpy as np
-        img = Image.fromarray(np.random.default_rng(1).integers(0, 255, (64, 64, 3), dtype=np.uint8))
-        result = notan(img, zones=7)
+        result = notan(_banded_image(7), zones=7)
         arr = np.array(result)
         unique_grey = np.unique(arr[:, :, 0])  # notan is greyscale-ish
         assert len(unique_grey) == 7, f"Expected 7 grey levels, got {len(unique_grey)}: {unique_grey}"
 
+    def test_notan_simplifies_noise_into_masses(self):
+        """Salt-and-pepper posterisation is exactly what made notans useless
+        on textured photos — noise must come out as a few masses, not 7."""
+        from backend.pipeline.artist_breakdown.processor import notan
+        from PIL import Image
+        import numpy as np
+        noise = Image.fromarray(np.random.default_rng(1).integers(0, 255, (64, 64, 3), dtype=np.uint8))
+        arr = np.array(notan(noise, zones=7))
+        from scipy.ndimage import label as _label
+        n_components = sum(
+            _label((arr[:, :, 0] == g))[1] for g in np.unique(arr[:, :, 0])
+        )
+        assert n_components <= 30, f"noise produced {n_components} fragments — not simplified"
+
     def test_compute_value_zones_7(self):
         from backend.analysis.values import compute_value_zones
         from backend.analysis.preprocessing import prepare
-        from PIL import Image
-        import numpy as np
-        img = Image.fromarray(np.random.default_rng(2).integers(0, 255, (64, 64, 3), dtype=np.uint8))
-        cache = prepare(img)
+        cache = prepare(_banded_image(7))
         zone_map, zones = compute_value_zones(cache, 7)
         assert len(zones) == 7
         occupied = [z for z in zones if (zone_map == z.id).any()]
@@ -658,8 +682,7 @@ def test_palette_size_does_not_control_region_count():
 class TestValueZonesExtra:
     def test_seven_zones_produces_seven_levels(self):
         from backend.analysis.values import compute_value_zones
-        img = Image.fromarray(np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8))
-        cache = _prepare(img)
+        cache = _prepare(_banded_image(7))
         zone_map, zones = compute_value_zones(cache, 7)
         assert len(zones) == 7
         for z in zones:

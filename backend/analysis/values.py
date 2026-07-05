@@ -1,4 +1,5 @@
 from __future__ import annotations
+import cv2
 import numpy as np
 from scipy.ndimage import label as scipy_label
 
@@ -20,12 +21,18 @@ def compute_value_zones(cache: ImageCache, n_zones: int) -> tuple[np.ndarray, li
     splits) rather than fixed values like 33/67, so each zone covers a
     meaningful visual range for this specific image.
 
+    The L channel is smoothed edge-preservingly BEFORE thresholding and the
+    zone map is simplified AFTER — a value study is a design of large masses,
+    not a per-pixel posterisation. Without this, textured photos (grass,
+    rock, fabric) produce salt-and-pepper zone maps that are useless for
+    teaching.
+
     Returns
     -------
     zone_map : (H, W) uint8  — zone index per pixel, 0-based
     zones    : list[ValueZone]
     """
-    L    = cache.L
+    L = smooth_lightness(cache.L)
     flat = L.ravel()
 
     # Equal-quantile thresholds
@@ -50,26 +57,41 @@ def compute_value_zones(cache: ImageCache, n_zones: int) -> tuple[np.ndarray, li
             id=i, label=label, l_min=lo, l_max=hi, grey_value=grey
         ))
 
-    # Spatial cleanup: remove tiny isolated patches via morphological opening
-    zone_map = _cleanup_zone_map(zone_map, n_zones)
+    zone_map = simplify_zone_map(zone_map, n_zones)
     return zone_map, zones
 
 
-def _cleanup_zone_map(zone_map: np.ndarray, n_zones: int) -> np.ndarray:
-    """Absorb tiny zone patches into their nearest large-component zone.
+def smooth_lightness(L: np.ndarray) -> np.ndarray:
+    """
+    Edge-preserving smoothing of an L* (0-100) channel before quantisation.
+    Bilateral filtering flattens texture (grass, rock grain) while keeping
+    the mass boundaries a painter actually cares about.
+    """
+    l8 = np.clip(L * 2.55, 0, 255).astype(np.uint8)
+    d = 9
+    l8 = cv2.bilateralFilter(l8, d, sigmaColor=35, sigmaSpace=9)
+    l8 = cv2.bilateralFilter(l8, d, sigmaColor=25, sigmaSpace=9)
+    return l8.astype(np.float32) / 2.55
 
-    Uses distance_transform_edt to assign each tiny-component pixel to the
-    zone of its nearest non-tiny pixel — O(P×Z) total instead of the previous
-    O(K×P) per-component cv2.dilate loop (K could be 10k+ on noisy images).
+
+def simplify_zone_map(zone_map: np.ndarray, n_zones: int, min_frac: float = 0.003) -> np.ndarray:
+    """
+    Turn a per-pixel quantisation into a mass design:
+    1. median-filter the (ordinal) zone indices — removes pepper noise
+    2. absorb every component smaller than `min_frac` of the image into the
+       zone of its nearest large component (distance-transform pass, O(P))
+
+    0.3% of a 1024² image ≈ 3k px — anything smaller is not a paintable
+    shape at study scale.
     """
     from scipy.ndimage import distance_transform_edt
 
-    min_px = max(50, zone_map.size // 2000)
+    zm = cv2.medianBlur(zone_map.astype(np.uint8), 7)
 
-    # Mark all tiny-component pixels across all zones
-    is_tiny = np.zeros(zone_map.shape, dtype=bool)
+    min_px = max(50, int(zm.size * min_frac))
+    is_tiny = np.zeros(zm.shape, dtype=bool)
     for z in range(n_zones):
-        labeled, n = scipy_label((zone_map == z).astype(np.uint8))
+        labeled, n = scipy_label((zm == z).astype(np.uint8))
         if n == 0:
             continue
         sizes = np.bincount(labeled.ravel())
@@ -80,12 +102,17 @@ def _cleanup_zone_map(zone_map: np.ndarray, n_zones: int) -> np.ndarray:
     not_tiny = ~is_tiny
     if not is_tiny.any() or not not_tiny.any():
         # Nothing to clean up, or all pixels are tiny (no stable anchors — skip)
-        return zone_map
+        return zm
 
-    result = zone_map.copy()
+    result = zm.copy()
     _, indices = distance_transform_edt(is_tiny, return_indices=True)
-    result[is_tiny] = zone_map[indices[0][is_tiny], indices[1][is_tiny]]
+    result[is_tiny] = zm[indices[0][is_tiny], indices[1][is_tiny]]
     return result
+
+
+# Backwards-compatible alias (previous private name)
+def _cleanup_zone_map(zone_map: np.ndarray, n_zones: int) -> np.ndarray:
+    return simplify_zone_map(zone_map, n_zones)
 
 
 def render_value_map(zone_map: np.ndarray, zones: list[ValueZone]) -> np.ndarray:

@@ -143,18 +143,35 @@ def process(
             if z1 != z2 and z1 != 0 and z2 != 0:
                 g_base[n1][n2]['weight'] = 1e6
 
-    # Cap graph cut iterations at 10 — visual difference vs 25 is negligible
-    lo, hi = 2.0, 100.0
-    best_labels = labels_slic
-    for _ in range(10):
+    # Cap graph cut iterations at 10 — visual difference vs 25 is negligible.
+    # Keep the FINEST partition that still has >= n_colors regions: accepting
+    # any partition <= n_colors let soft-edged photos (landscape horizons)
+    # chain-merge into 1-2 giant regions and the page degenerated to a single
+    # tinted rectangle.
+    # lo starts at 0: after 4x bilateral smoothing, neighbouring superpixels
+    # on hazy photos can differ by <2 RGB units, so a floor of 2.0 merged the
+    # whole picture before the search even began.
+    lo, hi = 0.0, 100.0
+    best_labels = None
+    best_n = None
+    last_merged = labels_slic
+    for _ in range(12):
         mid    = (lo + hi) / 2.0
         merged = sk_graph.cut_threshold(labels_slic, g_base.copy(), thresh=mid)
+        last_merged = merged
         n_reg  = len(np.unique(merged))
-        if n_reg > n_colors:
+        if n_reg >= n_colors:
             lo = mid
+            if best_n is None or n_reg < best_n:
+                # cut_threshold relabels from 0, but everything downstream
+                # treats label 0 as "no region" (SLIC starts at 1). Without
+                # the shift the LARGEST region — often most of the picture —
+                # was dropped and the page rendered almost entirely white.
+                best_labels, best_n = merged + 1, n_reg
         else:
             hi = mid
-            best_labels = merged
+    if best_labels is None:
+        best_labels = last_merged + 1
 
     # 5. LAB K-means on region mean colors → palette
     # A11: vectorised via ndimage_mean — O(P) instead of O(P×R) comprehension

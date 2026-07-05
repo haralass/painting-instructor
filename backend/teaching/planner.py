@@ -213,6 +213,11 @@ def _overview_text(brief: dict, medium: str) -> str:
     light_from = brief["light"]["from"]
     if light_from:
         parts.append(f"The light in this photo comes from {light_from}.")
+    else:
+        parts.append(
+            "The light here is soft and diffuse — no single direction. Model form with close values and gentle "
+            "edges rather than strong cast shadows."
+        )
 
     masses = brief["masses"]
     if masses:
@@ -269,6 +274,8 @@ def attach_image_notes(steps: list[dict], brief: dict, medium: str) -> list[dict
         if first_real or lvl <= 1:
             if light_from:
                 notes.append(f"Keep in mind from the start: the light comes from {light_from} — every shadow you place must agree with it.")
+            else:
+                notes.append("The light in this photo is diffuse — don't invent hard cast shadows; the form reads through close, soft value shifts.")
             if order:
                 seq = order[:3]
                 direction = "lightest first" if brief.get("block_in_light_first") else "darkest first"

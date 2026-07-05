@@ -162,7 +162,7 @@ def light_direction(img: Image.Image) -> Image.Image:
     return light_direction_with_angle(img)[0]
 
 
-def light_direction_with_angle(img: Image.Image) -> tuple[Image.Image, float]:
+def light_direction_with_angle(img: Image.Image) -> tuple[Image.Image, float | None]:
     """
     Light source direction via Sobel gradient orientation histogram.
     Overlay: 5 Gurney modeling zones color-coded on greyscale.
@@ -191,6 +191,19 @@ def light_direction_with_angle(img: Image.Image) -> tuple[Image.Image, float]:
     hist, edges = np.histogram(ang, bins=36, range=(0, 360), weights=mag)
     dom_angle   = float(edges[hist.argmax()] + 5)   # bin center
 
+    # Confidence: length of the magnitude-weighted resultant vector. Diffuse
+    # or multi-source light produces orientations that cancel out (R → 0);
+    # claiming a direction then would be teaching a lie — better to say
+    # "diffuse" than point an arrow at noise.
+    rad_all = np.radians(ang)
+    sum_mag = float(mag.sum()) + 1e-6
+    resultant = float(np.hypot(
+        float((mag * np.cos(rad_all)).sum()),
+        float((mag * np.sin(rad_all)).sum()),
+    )) / sum_mag
+    confident = resultant >= 0.12
+    reported_angle: float | None = dom_angle if confident else None
+
     # 5-zone posterization on L-channel
     L    = skcolor.rgb2lab(arr)[:, :, 0]
     zone = np.zeros(L.shape, dtype=np.uint8)
@@ -216,21 +229,24 @@ def light_direction_with_angle(img: Image.Image) -> tuple[Image.Image, float]:
     fn  = _font(10)
     W, H = out.size
 
-    # draw light direction arrow
-    cx, cy = W // 2, H // 2
-    r  = min(W, H) // 8
-    rad = np.radians(dom_angle)
-    ex, ey = int(cx + r * np.cos(rad)), int(cy - r * np.sin(rad))
-    dr.line([(cx, cy), (ex, ey)], fill=(255, 200, 0), width=3)
-    dr.ellipse([ex-5, ey-5, ex+5, ey+5], fill=(255, 200, 0))
-    dr.text((4, 4), f"Light: {dom_angle:.0f}°", fill=(255, 200, 0), font=fn)
+    # draw light direction arrow — only when the direction is trustworthy
+    if confident:
+        cx, cy = W // 2, H // 2
+        r  = min(W, H) // 8
+        rad = np.radians(dom_angle)
+        ex, ey = int(cx + r * np.cos(rad)), int(cy - r * np.sin(rad))
+        dr.line([(cx, cy), (ex, ey)], fill=(255, 200, 0), width=3)
+        dr.ellipse([ex-5, ey-5, ex+5, ey+5], fill=(255, 200, 0))
+        dr.text((4, 4), f"Light: {dom_angle:.0f}°", fill=(255, 200, 0), font=fn)
+    else:
+        dr.text((4, 4), "Light: diffuse (no single direction)", fill=(255, 200, 0), font=fn)
 
     labels = ["Highlight", "Halftone", "Core Shadow", "Reflected Light", "Cast Shadow"]
     for i, (label, color) in enumerate(zip(labels, zone_colors)):
         tc = (20, 20, 20) if max(color) > 140 else (220, 220, 220)
         dr.text((4, 20 + i * 18), label, fill=tc, font=fn)
 
-    return out, dom_angle
+    return out, reported_angle
 
 
 def tonal_map(img: Image.Image) -> Image.Image:

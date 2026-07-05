@@ -78,6 +78,47 @@ def _cell_centre(row: int, col: int) -> tuple[float, float]:
     return ((col + 0.5) / GRID, (row + 0.5) / GRID)
 
 
+def _align_attempt(ref: np.ndarray, att: np.ndarray) -> tuple[np.ndarray, bool]:
+    """
+    Photos of a painting are rarely taken square-on; a perspective-skewed
+    attempt shifts every grid cell and the localised feedback blames the
+    wrong areas. ORB features + RANSAC homography warp the attempt onto the
+    reference frame when enough reliable matches exist; otherwise the
+    resized attempt is used as-is. Returns (aligned_attempt, was_aligned).
+    """
+    H, W = ref.shape[:2]
+    try:
+        orb = cv2.ORB_create(nfeatures=3000)
+        g_ref = cv2.cvtColor(ref, cv2.COLOR_RGB2GRAY)
+        g_att = cv2.cvtColor(att, cv2.COLOR_RGB2GRAY)
+        k1, d1 = orb.detectAndCompute(g_ref, None)
+        k2, d2 = orb.detectAndCompute(g_att, None)
+        if d1 is None or d2 is None or len(k1) < 30 or len(k2) < 30:
+            return att, False
+
+        matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+        matches = sorted(matcher.match(d2, d1), key=lambda m: m.distance)[:400]
+        if len(matches) < 25:
+            return att, False
+
+        src = np.float32([k2[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
+        dst = np.float32([k1[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
+        M, inliers = cv2.findHomography(src, dst, cv2.RANSAC, 5.0)
+        if M is None or inliers is None or int(inliers.sum()) < 20:
+            return att, False
+
+        # sanity: reject degenerate/extreme warps
+        det = float(np.linalg.det(M[:2, :2]))
+        if not (0.25 < abs(det) < 4.0):
+            return att, False
+
+        warped = cv2.warpPerspective(att, M, (W, H), borderMode=cv2.BORDER_REPLICATE)
+        return warped, True
+    except Exception:
+        log.warning("attempt alignment failed; comparing unaligned", exc_info=True)
+        return att, False
+
+
 def critique_attempt(
     reference_path: str | Path,
     attempt_path: str | Path,
@@ -99,6 +140,7 @@ def critique_attempt(
     ref = _load_rgb(reference_path)
     h, w = ref.shape[:2]
     att = _load_rgb(attempt_path, size=(w, h))
+    att, aligned = _align_attempt(ref, att)
 
     ref_gray = cv2.GaussianBlur(cv2.cvtColor(ref, cv2.COLOR_RGB2GRAY), (5, 5), 0)
     att_gray = cv2.GaussianBlur(cv2.cvtColor(att, cv2.COLOR_RGB2GRAY), (5, 5), 0)
@@ -252,6 +294,7 @@ def critique_attempt(
         },
         "medium": medium,
         "n_value_bands": n_value_bands,
+        "aligned": aligned,
         "elapsed_sec": round(time.perf_counter() - t0, 2),
     }
 

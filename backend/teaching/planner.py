@@ -95,6 +95,7 @@ def build_image_brief(
     img_w: int,
     img_h: int,
     medium: str = "oil",
+    perspective: dict | None = None,
 ) -> dict:
     """
     Turn raw analysis data into the painting facts a teacher would point at:
@@ -201,6 +202,7 @@ def build_image_brief(
         "dark_fraction": round(dark_frac, 3),
         "warmest_colour": warmest,
         "coolest_colour": coolest,
+        "perspective": perspective,
     }
     brief["overview"] = _overview_text(brief, medium)
     return brief
@@ -244,6 +246,14 @@ def _overview_text(brief: dict, medium: str) -> str:
             f"The busiest area is the {b['location']} — it will tempt you into detail long before the painting is ready for it."
         )
 
+    vp = brief.get("perspective")
+    if vp:
+        parts.append(
+            f"This image has true perspective: {vp['n_lines']} structural lines converge toward the "
+            f"{_loc_word(vp['nx'], vp['ny'])}. Establish those lines straight and early — if they drift, "
+            "nothing built on them will sit right."
+        )
+
     return " ".join(parts)
 
 
@@ -276,6 +286,12 @@ def attach_image_notes(steps: list[dict], brief: dict, medium: str) -> list[dict
                 notes.append(f"Keep in mind from the start: the light comes from {light_from} — every shadow you place must agree with it.")
             else:
                 notes.append("The light in this photo is diffuse — don't invent hard cast shadows; the form reads through close, soft value shifts.")
+            vp = brief.get("perspective")
+            if vp:
+                notes.append(
+                    f"Draw the perspective lines first: {vp['n_lines']} of them converge toward the "
+                    f"{_loc_word(vp['nx'], vp['ny'])} — lay them in with a straightedge before any mass."
+                )
             if order:
                 seq = order[:3]
                 direction = "lightest first" if brief.get("block_in_light_first") else "darkest first"

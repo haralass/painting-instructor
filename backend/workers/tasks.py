@@ -284,6 +284,14 @@ def run_pipeline(
     #    derived entirely from this job's own analysis data: which masses to
     #    block in first, where the light comes from, where the focal point is,
     #    which areas will tempt overworking. ─────────────────────────────────
+    perspective_vp = None
+    try:
+        import numpy as _np
+        from ..analysis.perspective import detect_vanishing_point
+        perspective_vp = detect_vanishing_point(_np.asarray(img.convert("L")))
+    except Exception:
+        log.warning("vanishing point detection failed", exc_info=True)
+
     image_brief: dict = {}
     try:
         regions_data = load_regions(hier.get("regions_json", "")) if hier.get("regions_json") else []
@@ -295,6 +303,7 @@ def run_pipeline(
             img_w=img.size[0],
             img_h=img.size[1],
             medium=medium,
+            perspective=perspective_vp,
         )
     except Exception:
         tb = traceback.format_exc()
@@ -457,6 +466,16 @@ def run_pipeline(
     }
 
 
+def _palette_with_recipes(palette: list[dict], medium: str) -> list[dict]:
+    """Kubelka-Munk tube recipes for paint mediums; graceful no-op otherwise."""
+    try:
+        from ..teaching.mixing import recipes_for_palette
+        return recipes_for_palette(palette, medium)
+    except Exception:
+        log.warning("palette mixing recipes failed", exc_info=True)
+        return palette
+
+
 def _is_hierarchical_asset(path: str) -> bool:
     p = Path(path)
     return p.parent.name.startswith("level_") or "level_" in p.stem
@@ -575,7 +594,7 @@ def _build_manifest(
         "edge_maps":      edge_maps_rel,    # A4: individual sublayer maps
         "outline_composites": outline_composites_rel,
         "value_zones_map": value_zones_map,
-        "palette":        hier.get("palette", []),
+        "palette":        _palette_with_recipes(hier.get("palette", []), medium),
         "colour_families":hier.get("colour_families", []),
         "value_zones":    hier.get("value_zone_list", []),
         "video":  rel_to_outputs(video_path),

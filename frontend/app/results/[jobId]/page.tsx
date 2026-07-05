@@ -138,7 +138,10 @@ type Manifest = {
   }>;
   edge_maps?: Record<string, string>;  // global, non-level-filtered — "primary"|"secondary"|"decorative"|"texture" → rel path
   outline_composites?: Record<string, string>;  // global (non-level-filtered) outline composites
-  palette: { id: number; name: string; base_rgb: [number,number,number]; area_fraction: number }[];
+  palette: {
+    id: number; name: string; base_rgb: [number,number,number]; area_fraction: number;
+    mixing?: { text: string; delta_e: number; mixed_rgb: [number,number,number] };
+  }[];
   colour_families: unknown[];
   value_zones: { id: number; label: string; grey_value: number }[];
   teaching_stages?: {
@@ -878,17 +881,24 @@ export default function ResultsPage() {
               <div className="p-4">
                 <p className="text-xs font-semibold uppercase tracking-widest mb-2"
                    style={{ color: "var(--text-dim)" }}>Colour palette</p>
-                <div className="space-y-1">
+                <div className="space-y-2">
                   {manifest.palette.slice(0, 16).map(c => (
-                    <div key={c.id} className="flex items-center gap-2">
+                    <div key={c.id} className="flex items-start gap-2">
                       <div style={{
-                        width: 24, height: 16, borderRadius: 3, flexShrink: 0,
+                        width: 24, height: 16, borderRadius: 3, flexShrink: 0, marginTop: 2,
                         background: `rgb(${c.base_rgb.join(",")})`,
                         border: "1px solid rgba(255,255,255,0.1)",
                       }} />
-                      <span className="text-xs truncate" style={{ color: "var(--text-dim)" }}>
-                        {c.name} ({Math.round(c.area_fraction * 100)}%)
-                      </span>
+                      <div className="min-w-0">
+                        <span className="text-xs block truncate" style={{ color: "var(--text-dim)" }}>
+                          {c.name} ({Math.round(c.area_fraction * 100)}%)
+                        </span>
+                        {c.mixing && (
+                          <span className="text-[10px] block leading-snug" style={{ color: "var(--accent)" }}>
+                            mix: {c.mixing.text}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>

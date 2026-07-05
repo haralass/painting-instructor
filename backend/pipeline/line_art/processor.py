@@ -64,14 +64,20 @@ def _dog_line_strength(g: np.ndarray, s1: float, s2: float, gain: float) -> np.n
 
 def _classical_line_art(img_rgb: np.ndarray) -> Image.Image:
     """
-    No-ML line art fallback. Previously a missing controlnet_aux meant NO
-    line art at all (the step just failed with a warning) — the lesson's
-    most-referenced guide simply didn't exist unless multi-GB torch weights
-    were installed. Two-scale |DoG| over a bilateral-smoothed grey gives a
-    convincing pencil sketch from pure OpenCV: the fine scale draws interior
-    detail, the coarse scale weights the structural contours.
+    No-ML line art. Coherent Line Drawing (Kang et al. 2007 — Edge Tangent
+    Flow + flow-based DoG, see fdog.py) produces confident, connected ink
+    lines rather than the soft graphite of a plain |DoG| sketch, because
+    the filter runs perpendicular to a smoothed flow field and the response
+    is integrated ALONG it. The |DoG| pencil version below remains as a
+    second-tier fallback should FDoG ever fail.
     """
     gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
+    try:
+        from .fdog import coherent_line_drawing
+        return Image.fromarray(coherent_line_drawing(gray)).convert("RGB")
+    except Exception:
+        pass
+
     gs = cv2.bilateralFilter(gray, 9, 40, 9).astype(np.float32) / 255.0
 
     fine   = _dog_line_strength(gs, 0.8, 1.6, 14.0)

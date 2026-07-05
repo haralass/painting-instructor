@@ -277,6 +277,8 @@ def run_pipeline(
         pages.append(pbn_path)
     if hier.get("study_overlay"):
         pages.append(hier["study_overlay"])
+    if hier.get("smart_dot_to_dot") and not any(Path(p).name == "dot_to_dot.png" for p in pages):
+        pages.append(hier["smart_dot_to_dot"])
 
     # ── Step 9a: Image brief — the personal part of the lesson. Deterministic,
     #    derived entirely from this job's own analysis data: which masses to

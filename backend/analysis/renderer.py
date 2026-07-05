@@ -553,32 +553,155 @@ def render_study_overlay(
     label_maps: dict[str, np.ndarray],
     reference_rgb: np.ndarray,
     out_path,
-    level_scale: str = "l5",
+    coarse_scale: str = "l2",
+    fine_scale: str = "l5",
 ) -> str | None:
     """
-    Detail-study overlay: thin white contours of the finest partition drawn
-    directly ON the reference — the digital equivalent of tracing colour
-    regions by hand on the artwork (white gel pen on a print). Unlike the
-    teaching outlines this is deliberately dense: it is an analysis tool,
-    not a block-in guide.
+    Detail-study overlay with an artist's selectivity — the digital
+    equivalent of tracing colour regions by hand on a print.
+
+    Two line weights, like a hand study:
+      - BOLD white contours of the coarse partition everywhere (the big
+        design shapes);
+      - THIN, softer contours of the finest partition only where fine
+        regions actually crowd together — measured local boundary density
+        decides, so ornament/feature areas get dense tracing while flat
+        passages stay quiet. A uniform net over the whole image is what a
+        scanner does; choosing where to look is what a teacher does.
     """
     from skimage.segmentation import find_boundaries
 
-    lm = label_maps.get(level_scale)
-    if lm is None:
+    lm_fine = label_maps.get(fine_scale)
+    if lm_fine is None and label_maps:
+        lm_fine = sorted(label_maps.items())[-1][1]
+    if lm_fine is None:
         return None
+    lm_coarse = label_maps.get(coarse_scale, lm_fine)
 
-    H, W = lm.shape
+    H, W = lm_fine.shape
     ref = reference_rgb
     if ref.shape[:2] != (H, W):
         ref = cv2.resize(ref, (W, H), interpolation=cv2.INTER_AREA)
     out = ref.copy()
 
-    b = find_boundaries(lm, mode="inner")
-    # faint dark halo first so the white line reads on light areas too
-    halo = cv2.dilate(b.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)
-    out[halo & ~b] = (out[halo & ~b] * 0.65).astype(np.uint8)
-    out[b] = (250, 248, 242)
+    b_fine   = find_boundaries(lm_fine,   mode="inner")
+    b_coarse = find_boundaries(lm_coarse, mode="inner")
+
+    # Where does the image have designed detail? Local density of fine
+    # boundaries, box-filtered at ~5% of the short side.
+    k = max(15, (min(H, W) // 20) | 1)
+    density = cv2.boxFilter(b_fine.astype(np.float32), -1, (k, k))
+    nz = density[density > 1e-6]
+    if nz.size:
+        thr = float(np.percentile(nz, 55))
+        detail_mask = density >= thr
+    else:
+        detail_mask = np.zeros_like(b_fine)
+
+    fine_draw   = b_fine & detail_mask
+    coarse_draw = cv2.dilate(b_coarse.astype(np.uint8), np.ones((2, 2), np.uint8)).astype(bool)
+
+    # faint dark halo first so white lines read on light areas too
+    all_lines = fine_draw | coarse_draw
+    halo = cv2.dilate(all_lines.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)
+    out[halo & ~all_lines] = (out[halo & ~all_lines] * 0.65).astype(np.uint8)
+    out[fine_draw]   = (228, 224, 214)   # thin & soft — detail tracing
+    out[coarse_draw] = (252, 250, 245)   # bold & bright — the big shapes
 
     Image.fromarray(out).save(str(out_path))
     return str(out_path)
+
+
+def render_smart_dot_to_dot(
+    label_map: "np.ndarray",
+    W: int,
+    H: int,
+    out_path,
+    max_dots: int = 160,
+    min_region_frac: float = 0.005,
+) -> dict | None:
+    """
+    Art-book style dot-to-dot built from the merge-tree region boundaries,
+    replacing the old fixed-step dots over raw line art (which, on noisy
+    photos, numbered the noise — connecting them produced garbage) and a
+    first Canny-contour version (whose fragments never redrew the shapes).
+
+    Region boundaries are CLOSED, clean loops of the actual painting masses
+    — the face oval, the lips, the background shapes — so connecting the
+    dots reconstructs the block-in under-drawing by definition:
+      1. regions ordered largest-first; slivers below `min_region_frac`
+         contribute no dots at all (the "useless dots" problem);
+      2. each region's outer contour is simplified with Douglas-Peucker —
+         corners and curvature survive, everything in between goes;
+      3. dots are numbered IN LOOP ORDER; each region starts with a hollow
+         ring (the art-book "lift your pencil / new shape" marker); borders
+         already traced by a neighbouring region are not dotted twice.
+    """
+    from PIL import ImageDraw
+    from ..utils.fonts import get_font
+
+    canvas = Image.new("RGB", (W, H), (252, 251, 248))
+    dr = ImageDraw.Draw(canvas)
+    font = get_font(max(9, min(H, W) // 70))
+
+    eps     = 0.016 * (W + H) / 2
+    min_gap = max(9.0, 0.014 * (W + H) / 2)
+    min_px  = int(min_region_frac * W * H)
+    edge_margin = max(4, int(0.01 * min(W, H)))
+
+    ids, counts = np.unique(label_map, return_counts=True)
+    order = ids[np.argsort(-counts)]
+    area_of = dict(zip(ids.tolist(), counts.tolist()))
+
+    placed: list[tuple[float, float]] = []
+    dots: list[tuple[int, int, int]] = []   # (x, y, group)
+    n, group = 0, 0
+
+    for lbl in order:
+        if n >= max_dots - 3:
+            break
+        if area_of[int(lbl)] < min_px:
+            break   # sorted by area — everything after is smaller
+
+        mask = (label_map == lbl).astype(np.uint8)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            continue
+        cnt = max(contours, key=cv2.contourArea)
+        approx = cv2.approxPolyDP(cnt, eps, closed=True).reshape(-1, 2)
+        if approx.shape[0] < 3:
+            continue
+        remaining = max_dots - n
+        if approx.shape[0] > remaining:
+            idx = np.linspace(0, approx.shape[0] - 1, remaining).astype(int)
+            approx = approx[idx]
+
+        # skip dots on the picture frame (the background's contour runs along
+        # the image border — those dots trace the photo, not the subject) and
+        # dots a neighbouring region already traced (shared borders)
+        keep = [
+            (float(x), float(y)) for x, y in approx
+            if edge_margin < x < W - edge_margin and edge_margin < y < H - edge_margin
+            and all((x - px) ** 2 + (y - py) ** 2 >= min_gap ** 2 for px, py in placed)
+        ]
+        if len(keep) < 3:
+            continue
+
+        group += 1
+        for j, (x, y) in enumerate(keep):
+            placed.append((x, y))
+            n += 1
+            dots.append((int(x), int(y), group))
+            r = 3.0
+            if j == 0:
+                dr.ellipse([x - r - 1.5, y - r - 1.5, x + r + 1.5, y + r + 1.5],
+                           outline=(40, 38, 34), width=2)
+            else:
+                dr.ellipse([x - r, y - r, x + r, y + r], fill=(40, 38, 34))
+            dr.text((x + r + 2, y - r - 6), str(n), fill=(120, 90, 50), font=font)
+
+    if n < 3:
+        return None
+
+    canvas.save(str(out_path))
+    return {"path": str(out_path), "n_dots": n, "n_groups": group, "dots": dots}

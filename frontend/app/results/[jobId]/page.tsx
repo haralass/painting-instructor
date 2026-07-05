@@ -59,6 +59,11 @@ const PAGE_LABELS: Record<string, { title: string; why: string; tip: string }> =
     why:   "These dots trace the most structurally significant edges. Connecting them in order builds your under-drawing.",
     tip:   "Connect these dots lightly with a pencil before painting. This is your structural under-drawing.",
   },
+  study_overlay: {
+    title: "Detail Study",
+    why:   "Every colour-region boundary traced directly on the reference — the digital version of outlining shapes by hand on a print. Use it to see exactly where one colour ends and the next begins.",
+    tip:   "Pick one small area, follow its traced shapes, and mix each one separately before you commit it to the canvas.",
+  },
 };
 
 // ── Level labels for hierarchical detail ─────────────────────────────────────
@@ -90,7 +95,7 @@ const OUTLINE_SUBLAYER_LABELS: Record<string, string> = {
 
 const CLASSIC_PAGE_KEYS = [
   "line_art", "notan", "color_temperature", "color_palette",
-  "light_direction", "color_by_number", "dot_to_dot",
+  "light_direction", "color_by_number", "dot_to_dot", "study_overlay",
 ];
 
 type CompareMode = "analysis" | "reference" | "side_by_side" | "overlay";

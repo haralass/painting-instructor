@@ -166,6 +166,18 @@ def run_hierarchical_analysis(
     except Exception:
         log.warning("render_paint_by_numbers failed", exc_info=True)
 
+    # ── 5c. Detail-study overlay — white contours drawn ON the reference ─────
+    from .renderer import render_study_overlay
+    study_path: str | None = None
+    try:
+        study_path = render_study_overlay(
+            label_maps=label_maps,
+            reference_rgb=cache.rgb,
+            out_path=out_dir / "study_overlay.png",
+        )
+    except Exception:
+        log.warning("render_study_overlay failed", exc_info=True)
+
     # ── 6. Write regions JSON ─────────────────────────────────────────────────
     regions_path = out_dir / "regions.json"
     regions_path.write_text(json.dumps(
@@ -228,4 +240,5 @@ def run_hierarchical_analysis(
         "edge_maps":           _edge_map_paths,  # A4: individual maps for frontend sublayer toggles
         "outline_composites":  _outline_composite_paths,  # global composites for lesson_plan resolution
         "paint_by_numbers":    pbn_path,   # hierarchy-based page (replaces classic when both exist)
+        "study_overlay":       study_path, # white region contours ON the reference (detail study)
     }

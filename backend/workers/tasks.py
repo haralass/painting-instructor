@@ -275,6 +275,8 @@ def run_pipeline(
     pbn_path = hier.get("paint_by_numbers")
     if pbn_path and not any(Path(p).name == "color_by_number.png" for p in pages):
         pages.append(pbn_path)
+    if hier.get("study_overlay"):
+        pages.append(hier["study_overlay"])
 
     # ── Step 9a: Image brief — the personal part of the lesson. Deterministic,
     #    derived entirely from this job's own analysis data: which masses to

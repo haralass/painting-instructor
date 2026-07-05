@@ -547,3 +547,38 @@ def render_paint_by_numbers(
 
     img.save(str(out_path))
     return str(out_path)
+
+
+def render_study_overlay(
+    label_maps: dict[str, np.ndarray],
+    reference_rgb: np.ndarray,
+    out_path,
+    level_scale: str = "l5",
+) -> str | None:
+    """
+    Detail-study overlay: thin white contours of the finest partition drawn
+    directly ON the reference — the digital equivalent of tracing colour
+    regions by hand on the artwork (white gel pen on a print). Unlike the
+    teaching outlines this is deliberately dense: it is an analysis tool,
+    not a block-in guide.
+    """
+    from skimage.segmentation import find_boundaries
+
+    lm = label_maps.get(level_scale)
+    if lm is None:
+        return None
+
+    H, W = lm.shape
+    ref = reference_rgb
+    if ref.shape[:2] != (H, W):
+        ref = cv2.resize(ref, (W, H), interpolation=cv2.INTER_AREA)
+    out = ref.copy()
+
+    b = find_boundaries(lm, mode="inner")
+    # faint dark halo first so the white line reads on light areas too
+    halo = cv2.dilate(b.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)
+    out[halo & ~b] = (out[halo & ~b] * 0.65).astype(np.uint8)
+    out[b] = (250, 248, 242)
+
+    Image.fromarray(out).save(str(out_path))
+    return str(out_path)

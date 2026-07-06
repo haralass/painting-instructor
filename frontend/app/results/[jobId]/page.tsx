@@ -2,8 +2,17 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import EvolvingCanvas, { STAGE_VISUAL_COUNT } from "../../components/EvolvingCanvas";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+// Which evolving-canvas stage each pipeline step should show, so the loading
+// screen paints the picture forward as the real work advances.
+const STEP_STAGE: Record<string, number> = {
+  loading: 0, line_art: 1, notan: 2, color_temperature: 3, color_palette: 3,
+  light_direction: 3, color_by_number: 4, dot_to_dot: 1, hierarchical: 4,
+  video: 5, pdf: 5, manifest: 5, completed: 5,
+};
 
 // ── Step labels for the progress display ─────────────────────────────────────
 const STEP_LABELS: Record<string, string> = {
@@ -351,7 +360,7 @@ export default function ResultsPage() {
           {jobStatus.status === "failed" && (
             <>
               <div className="w-14 h-14 mx-auto mb-6 rounded-full flex items-center justify-center"
-                   style={{ background: "rgba(191,91,69,0.15)", border: "1px solid rgba(191,91,69,0.4)", color: "#e0876f", fontSize: 22 }}>
+                   style={{ background: "rgba(157,47,47,0.1)", border: "1px solid rgba(157,47,47,0.35)", color: "var(--crimson)", fontSize: 22 }}>
                 ✕
               </div>
               <h2 className="font-display text-3xl mb-2" style={{ color: "var(--text)" }}>Processing failed</h2>
@@ -428,7 +437,7 @@ export default function ResultsPage() {
 
       {/* ── Top bar ─────────────────────────────────────────────────────────── */}
       <header className="flex items-center justify-between px-6 py-4 border-b flex-shrink-0"
-              style={{ borderColor: "var(--border)", background: "linear-gradient(to bottom, rgba(25,21,18,0.6), transparent)" }}>
+              style={{ borderColor: "var(--border)", background: "linear-gradient(to bottom, rgba(248,244,234,0.9), transparent)" }}>
         <Link href="/" className="font-display text-lg" style={{ color: "var(--text)", textDecoration: "none" }}>
           <span style={{ color: "var(--accent)" }}>←</span> Painting <em style={{ color: "var(--accent)" }}>Instructor</em>
         </Link>
@@ -493,7 +502,7 @@ export default function ResultsPage() {
                 className="w-full text-left px-2 py-1.5 rounded text-xs font-medium transition-colors"
                 style={{
                   background: viewMode === mode ? "var(--accent)" : "var(--surface)",
-                  color:      viewMode === mode ? "#0f0e0d" : "var(--text-dim)",
+                  color:      viewMode === mode ? "var(--paper)" : "var(--text-dim)",
                 }}>
                 {label}
               </button>
@@ -527,7 +536,7 @@ export default function ResultsPage() {
                        style={{
                          width: 18, height: 18, borderRadius: 3,
                          background: `rgb(${c.base_rgb.join(",")})`,
-                         border: "1px solid rgba(255,255,255,0.1)",
+                         border: "1px solid var(--border)",
                        }} />
                 ))}
               </div>
@@ -555,7 +564,7 @@ export default function ResultsPage() {
                       className="flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors"
                       style={{
                         background: viewMode === mode ? "var(--accent)" : "var(--surface)",
-                        color:      viewMode === mode ? "#0f0e0d" : "var(--text-dim)",
+                        color:      viewMode === mode ? "var(--paper)" : "var(--text-dim)",
                         border:     "1px solid var(--border)",
                       }}>
                 {label}
@@ -635,7 +644,7 @@ export default function ResultsPage() {
               </div>
               <input type="range" min={1} max={5} step={1} value={detailLevel}
                      onChange={e => { setDetailLevel(Number(e.target.value)); setViewMode("hierarchical_lesson"); }}
-                     className="w-full accent-yellow-600" />
+                     className="w-full accent-orange-700" />
               <div className="flex justify-between text-xs mt-1" style={{ color: "var(--text-dim)" }}>
                 <span>Foundation</span><span>Full Reference</span>
               </div>
@@ -648,7 +657,7 @@ export default function ResultsPage() {
                     onClick={() => { toggleLayer(key); setViewMode("hierarchical_lesson"); }}
                     style={{
                       background:   vis ? "var(--accent)" : "var(--surface)",
-                      color:        vis ? "#0f0e0d"       : "var(--text)",
+                      color:        vis ? "var(--paper)"       : "var(--text)",
                       border:       `1px solid ${vis ? "var(--accent)" : "var(--border)"}`,
                       padding:      "6px 14px",
                       borderRadius: 8,
@@ -673,7 +682,7 @@ export default function ResultsPage() {
                         onClick={() => toggleSublayer(key)}
                         style={{
                           background:   vis ? "var(--accent)" : "var(--surface)",
-                          color:        vis ? "#0f0e0d"       : "var(--text-dim)",
+                          color:        vis ? "var(--paper)"       : "var(--text-dim)",
                           border:       `1px solid ${vis ? "var(--accent)" : "var(--border)"}`,
                           padding:      "4px 10px",
                           borderRadius: 6,
@@ -714,7 +723,7 @@ export default function ResultsPage() {
                           className="px-3 py-1 rounded border text-xs transition-colors"
                           style={{
                             background:  compareMode === m ? "var(--accent)" : "var(--surface)",
-                            color:       compareMode === m ? "#0f0e0d"       : "var(--text-dim)",
+                            color:       compareMode === m ? "var(--paper)"       : "var(--text-dim)",
                             borderColor: "var(--border)",
                           }}>
                     {m === "analysis"    ? "Analysis"
@@ -728,7 +737,7 @@ export default function ResultsPage() {
                     <span className="text-xs" style={{ color: "var(--text-dim)" }}>Opacity</span>
                     <input type="range" min={0} max={1} step={0.05} value={opacity}
                            onChange={e => setOpacity(Number(e.target.value))}
-                           style={{ width: 80 }} className="accent-yellow-600" />
+                           style={{ width: 80 }} className="accent-orange-700" />
                   </div>
                 )}
               </div>
@@ -812,7 +821,7 @@ export default function ResultsPage() {
                     return (
                       <div key={stage.order} className="flex gap-2">
                         <div className="flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold mt-0.5"
-                             style={{ background: "var(--accent)", color: "#0f0e0d" }}>
+                             style={{ background: "var(--accent)", color: "var(--paper)" }}>
                           {stage.order}
                         </div>
                         <div>
@@ -887,7 +896,7 @@ export default function ResultsPage() {
                       <div style={{
                         width: 24, height: 16, borderRadius: 3, flexShrink: 0, marginTop: 2,
                         background: `rgb(${c.base_rgb.join(",")})`,
-                        border: "1px solid rgba(255,255,255,0.1)",
+                        border: "1px solid var(--border)",
                       }} />
                       <div className="min-w-0">
                         <span className="text-xs block truncate" style={{ color: "var(--text-dim)" }}>
@@ -1074,7 +1083,7 @@ function LessonPlayer({
       {/* The teacher's brief — image-specific, computed from THIS photo */}
       {(brief?.overview || manifest.personal_observations) && idx === 0 && (
         <div className="rounded-xl p-4"
-             style={{ background: "rgba(220,165,94,0.07)", border: "1px solid rgba(220,165,94,0.25)" }}>
+             style={{ background: "rgba(180,81,31,0.06)", border: "1px solid rgba(180,81,31,0.22)" }}>
           <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: "var(--accent)" }}>
             Before you start — about your photo
           </p>
@@ -1101,7 +1110,7 @@ function LessonPlayer({
                     className="px-3 py-1 rounded border text-xs transition-colors"
                     style={{
                       background:  showRef ? "var(--accent)" : "var(--surface)",
-                      color:       showRef ? "#0f0e0d" : "var(--text-dim)",
+                      color:       showRef ? "var(--paper)" : "var(--text-dim)",
                       borderColor: "var(--border)",
                     }}>
               {showRef ? "Show analysis" : "Show reference"}
@@ -1131,7 +1140,7 @@ function LessonPlayer({
           {/* For YOUR photo — the personal part */}
           {step.image_notes && step.image_notes.length > 0 && (
             <div className="rounded-xl p-3"
-                 style={{ background: "rgba(220,165,94,0.08)", border: "1px solid rgba(220,165,94,0.3)" }}>
+                 style={{ background: "rgba(180,81,31,0.07)", border: "1px solid rgba(180,81,31,0.28)" }}>
               <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: "var(--accent)" }}>
                 For your photo
               </p>
@@ -1169,7 +1178,7 @@ function LessonPlayer({
                     className="flex-1 px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
                     style={{
                       background: idx === steps.length - 1 ? "var(--surface)" : "var(--accent)",
-                      color:      idx === steps.length - 1 ? "var(--text-dim)" : "#0f0e0d",
+                      color:      idx === steps.length - 1 ? "var(--text-dim)" : "var(--paper)",
                       cursor:     idx === steps.length - 1 ? "default" : "pointer",
                     }}>
               {idx === steps.length - 1 ? "Lesson complete" : "Next step →"}
@@ -1216,10 +1225,10 @@ type CritiqueResult = {
 };
 
 const KIND_COLORS: Record<string, string> = {
-  value:       "#dca55e",
-  temperature: "#bf5b45",
-  saturation:  "#7d92ab",
-  structure:   "#8a9179",
+  value:       "#b4511f",
+  temperature: "#9d2f2f",
+  saturation:  "#3e5c76",
+  structure:   "#6f7d5c",
 };
 
 function CritiquePanel({ jobId, referenceUrl }: { jobId: string; referenceUrl: string }) {
@@ -1275,7 +1284,7 @@ function CritiquePanel({ jobId, referenceUrl }: { jobId: string; referenceUrl: s
       </div>
 
       {error && (
-        <p className="text-sm px-4 py-3 rounded-lg" style={{ background: "rgba(191,91,69,0.12)", color: "#e0876f" }}>
+        <p className="text-sm px-4 py-3 rounded-lg" style={{ background: "rgba(157,47,47,0.1)", color: "var(--crimson)" }}>
           {error}
         </p>
       )}
@@ -1290,7 +1299,7 @@ function CritiquePanel({ jobId, referenceUrl }: { jobId: string; referenceUrl: s
             ).map(([label, score]) => (
               <div key={label} className="rounded-xl p-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
                 <p className="text-xs mb-1" style={{ color: "var(--text-dim)" }}>{label}</p>
-                <p className="text-2xl font-bold" style={{ color: score >= 80 ? "var(--accent)" : score >= 55 ? "var(--text)" : "#e0876f" }}>
+                <p className="text-2xl font-bold" style={{ color: score >= 80 ? "var(--accent)" : score >= 55 ? "var(--text)" : "var(--crimson)" }}>
                   {Math.round(score)}
                 </p>
                 <div className="h-1 rounded-full mt-2 overflow-hidden" style={{ background: "var(--border)" }}>
@@ -1301,7 +1310,7 @@ function CritiquePanel({ jobId, referenceUrl }: { jobId: string; referenceUrl: s
           </div>
 
           {/* First fix */}
-          <div className="rounded-xl p-4" style={{ background: "rgba(220,165,94,0.08)", border: "1px solid rgba(220,165,94,0.3)" }}>
+          <div className="rounded-xl p-4" style={{ background: "rgba(180,81,31,0.07)", border: "1px solid rgba(180,81,31,0.28)" }}>
             <p className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: "var(--accent)" }}>
               Fix this first
             </p>
@@ -1328,8 +1337,8 @@ function CritiquePanel({ jobId, referenceUrl }: { jobId: string; referenceUrl: s
               {result.feedback.map((f, i) => (
                 <div key={i} className="rounded-xl p-3 flex gap-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
                   <span className="flex-shrink-0 mt-0.5 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
-                        style={{ background: `${KIND_COLORS[f.kind] ?? "#9b9187"}22`, color: KIND_COLORS[f.kind] ?? "#9b9187",
-                                 border: `1px solid ${KIND_COLORS[f.kind] ?? "#9b9187"}55` }}>
+                        style={{ background: `${KIND_COLORS[f.kind] ?? "#6f6655"}22`, color: KIND_COLORS[f.kind] ?? "#6f6655",
+                                 border: `1px solid ${KIND_COLORS[f.kind] ?? "#6f6655"}55` }}>
                     {f.kind}
                   </span>
                   <div>

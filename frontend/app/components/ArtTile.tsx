@@ -8,10 +8,10 @@ import { useMemo } from "react";
  * mirroring what the analysis pipeline does to a real photo.
  */
 
-const WARM = ["#dca55e", "#bf5b45", "#e9ddc8", "#a4683f", "#f2c078", "#8f4632"];
-const COOL = ["#7d92ab", "#8a9179", "#5d6b7d", "#41504f", "#6d7f8f"];
+const WARM = ["#c96f3a", "#b4511f", "#e0b26a", "#9d2f2f", "#c9932e", "#d9a05b"];
+const COOL = ["#3e5c76", "#6f7d5c", "#7d92ab", "#41504f", "#5d6b7d"];
 const ALL = [...WARM, ...COOL];
-const NOTAN = ["#0d0c0a", "#7a736a", "#e9e2d6"];
+const NOTAN = ["#2b251b", "#8a8272", "#f3edde"];
 
 const W = 200;
 const H = 150;
@@ -113,7 +113,7 @@ export default function ArtTile({
         </>
       ) : mode === "palette" ? (
         <>
-          <rect width={W} height={H} fill="#14100c" />
+          <rect width={W} height={H} fill="#f3edde" />
           {ALL.slice(0, 10).map((c, i) => (
             <rect
               key={i}
@@ -128,10 +128,10 @@ export default function ArtTile({
         </>
       ) : (
         <>
-          <rect width={W} height={H} fill={mode === "notan" ? "#e9e2d6" : mode === "line" ? "#14100c" : "#171310"} />
+          <rect width={W} height={H} fill={mode === "notan" ? "#f3edde" : "#fffdf7"} />
           {shown.map((b, i) => {
             if (mode === "line") {
-              return <path key={i} d={b.path} fill="none" stroke="#dca55e" strokeWidth={i < 5 ? 1.7 : 0.8} opacity={i < 5 ? 0.95 : 0.45} />;
+              return <path key={i} d={b.path} fill="none" stroke="#2b251b" strokeWidth={i < 5 ? 1.7 : 0.8} opacity={i < 5 ? 0.9 : 0.4} />;
             }
             if (mode === "notan") {
               return <path key={i} d={b.path} fill={NOTAN[b.ci % 3]} />;
@@ -145,7 +145,7 @@ export default function ArtTile({
                 <g key={i}>
                   <path d={b.path} fill={ALL[b.ci % ALL.length]} opacity={0.6} stroke="#6b6258" strokeWidth={0.6} />
                   {i < 12 && (
-                    <text x={b.x} y={b.y + 2.8} fontSize={8} fill="#f7f2e9" textAnchor="middle" fontFamily="monospace" fontWeight="bold">
+                    <text x={b.x} y={b.y + 2.8} fontSize={8} fill="#241f16" textAnchor="middle" fontFamily="monospace" fontWeight="bold">
                       {(b.ci % 12) + 1}
                     </text>
                   )}
@@ -162,7 +162,7 @@ export default function ArtTile({
               return (
                 <g key={i}>
                   {pts.map(([px, py], k) => (
-                    <circle key={k} cx={px} cy={py} r={1.6} fill="#dca55e" opacity={0.85} />
+                    <circle key={k} cx={px} cy={py} r={1.6} fill="#b4511f" opacity={0.85} />
                   ))}
                 </g>
               );

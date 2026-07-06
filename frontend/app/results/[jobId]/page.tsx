@@ -329,21 +329,23 @@ export default function ResultsPage() {
         <div className="text-center max-w-md fade-up">
           {isRunning && (
             <>
-              {/* Paint blobs mixing — staggered pulse */}
-              <div className="flex items-center justify-center gap-3 mb-8">
-                {["#dca55e", "#bf5b45", "#7d92ab"].map((c, i) => (
-                  <span key={c} className="blob-pulse inline-block rounded-full"
-                        style={{
-                          width: 22 + (i === 1 ? 10 : 0), height: 22 + (i === 1 ? 10 : 0),
-                          background: `radial-gradient(circle at 35% 30%, ${c}, ${c}88)`,
-                          boxShadow: `0 0 24px ${c}55`,
-                          animationDelay: `${i * 0.35}s`,
-                        }} />
-                ))}
+              {/* Your canvas, laid in stage by stage as the pipeline advances */}
+              <div className="mx-auto mb-8 rounded-sm overflow-hidden"
+                   style={{
+                     aspectRatio: "4/3", maxWidth: 360,
+                     border: "10px solid var(--paper)",
+                     outline: "1px solid var(--border-strong)",
+                     boxShadow: "0 30px 70px rgba(63,48,28,0.18)",
+                     transform: "rotate(-0.6deg)",
+                   }}>
+                <EvolvingCanvas
+                  stage={Math.min(STEP_STAGE[jobStatus.step] ?? 0, STAGE_VISUAL_COUNT - 1)}
+                  seed={7}
+                />
               </div>
-              <p className="eyebrow mb-3">Analysing your reference</p>
-              <h2 className="font-display text-3xl mb-4" style={{ color: "var(--text)" }}>
-                Preparing your <em className="text-gradient">tutorial</em>
+              <p className="eyebrow mb-3">Painting your reference</p>
+              <h2 className="font-display text-3xl mb-4" style={{ color: "var(--ink)" }}>
+                Laying in your <em className="text-gradient">lesson</em>
               </h2>
               <p className="text-base mb-2" style={{ color: "var(--text)" }}>
                 {STEP_LABELS[jobStatus.step] ?? jobStatus.message ?? "Processing…"}

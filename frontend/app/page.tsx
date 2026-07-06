@@ -470,7 +470,7 @@ export default function HomePage() {
                 The <em className="text-gradient">studio</em>
               </h2>
               <p className="mt-5 max-w-md mx-auto text-sm" style={{ color: "var(--text-dim)" }}>
-                Every control the engine understands, in the order you'd set up
+                Every control the engine understands, in the order you&rsquo;d set up
                 a real easel. The defaults follow your medium — change anything.
               </p>
             </div>
@@ -534,7 +534,7 @@ export default function HomePage() {
                   <span style={{ color: "var(--accent)" }}>2.</span> Medium &amp; your level
                 </p>
                 <p className="text-xs mb-4" style={{ color: "var(--text-dim)" }}>
-                  The lesson's stages, order and palette advice all follow this choice.
+                  The lesson&rsquo;s stages, order and palette advice all follow this choice.
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {MEDIUMS.map(m => (
@@ -565,7 +565,7 @@ export default function HomePage() {
                   <span style={{ color: "var(--accent)" }}>3.</span> Colour &amp; values
                 </p>
                 <p className="text-xs mb-4" style={{ color: "var(--text-dim)" }}>
-                  How many colours you'll mix, and how finely light is divided.
+                  How many colours you&rsquo;ll mix, and how finely light is divided.
                 </p>
                 <label className="label-xs block mb-3">
                   Palette size — <span style={{ color: "var(--accent)" }}>{paletteSize} colours</span>

@@ -39,6 +39,11 @@ export const PAGE_LABELS: Record<string, { title: string; why: string; tip: stri
     why:   "A local segmentation model isolates your subject from its background. The eye should land here first — keep this area the sharpest, most saturated, and highest in contrast.",
     tip:   "Paint the muted areas first and loosely; save your cleanest colour, hardest edges, and thickest paint for the subject.",
   },
+  depth_planes: {
+    title: "Depth Planes",
+    why:   "A local depth model splits the scene into foreground, middle-ground and background. Atmospheric perspective means distance reads as cooler, lighter and lower in contrast — warm/sharp up front, cool/soft far away.",
+    tip:   "Push the background cooler, lighter and softer than it looks; reserve your warmest, darkest, hardest-edged notes for the foreground.",
+  },
   notan: {
     title: "Value Study (Notan)",
     why:   "Notan is a Japanese design concept — before you touch colour, you must get your lights and darks right. A painting with correct values reads in black and white.",

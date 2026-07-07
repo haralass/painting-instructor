@@ -5,9 +5,13 @@ Paint does NOT mix like RGB light: blue + yellow makes green because of how
 pigments absorb and scatter, which averaging RGB numbers gets wrong. K-M is
 the standard published model (Kubelka & Munk 1931; single-constant form per
 Duncan 1940): per wavelength band, K/S = (1-R)²/2R is additive by pigment
-concentration, and the mixture reflectance inverts the same formula. We run
-it on linearised sRGB channels as three coarse wavelength bands — the
-industry shortcut used by every hobby-grade mixing tool.
+concentration, and the mixture reflectance inverts the same formula.
+
+We mix in a real 36-band spectral space (`analysis/spectral.py` — reflectance
+recovered from sRGB, luminance-weighted concentration), which captures pigment
+absorption far better than the 3-channel shortcut; if the spectral stack
+(colour-science) is unavailable, we fall back to running K-M on three coarse
+linearised-sRGB bands so recipes still work in a light install.
 
 The algorithm is public science; this implementation is ours. (The idea of
 shipping recipes came from studying ArtistAssistApp, whose code we do not
@@ -23,6 +27,12 @@ from functools import lru_cache
 from itertools import combinations
 
 import numpy as np
+
+try:
+    from ..analysis import spectral as _spectral
+    _SPECTRAL = True
+except Exception:  # colour-science missing → 3-band fallback
+    _SPECTRAL = False
 
 # A standard starter palette (oil/acrylic). sRGB approximations of masstone.
 TUBES: list[tuple[str, tuple[int, int, int]]] = [
@@ -75,8 +85,25 @@ def _refl(ks: np.ndarray) -> np.ndarray:
     return 1.0 + ks - np.sqrt(ks * ks + 2.0 * ks)
 
 
+@lru_cache(maxsize=512)
+def _reflectance_for(rgb: tuple[int, int, int]) -> np.ndarray:
+    """Cached 36-band reflectance recovery for a tube colour (recovery is ~80ms)."""
+    return _spectral.rgb_to_reflectance(rgb)
+
+
 def mix_km(rgbs: list[tuple[int, int, int]], parts: list[float]) -> np.ndarray:
-    """Mix paints by parts; returns the mixture's sRGB as float array."""
+    """Mix paints by parts; returns the mixture's sRGB as float array.
+
+    Uses 36-band spectral Kubelka-Munk when available (physically accurate),
+    else three linearised-sRGB bands."""
+    if _SPECTRAL:
+        try:
+            refls = [_reflectance_for(tuple(int(round(c)) for c in rgb)) for rgb in rgbs]
+            mixed = _spectral.mix_reflectances(refls, list(parts))
+            return np.asarray(_spectral.reflectance_to_rgb(mixed), dtype=np.float64)
+        except Exception:
+            pass  # fall through to the 3-band shortcut
+
     w = np.asarray(parts, dtype=np.float64)
     w = w / w.sum()
     ks_mix = np.zeros(3)

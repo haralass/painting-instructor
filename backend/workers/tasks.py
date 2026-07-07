@@ -88,6 +88,7 @@ def run_pipeline(
     from ..pipeline.color_by_number.processor import process as color_by_number
     from ..pipeline.dot_to_dot.processor import process as dot_to_dot
     from ..analysis.subject import subject_mask as compute_subject_mask
+    from ..analysis.depth import depth_planes as compute_depth_planes
     from ..pipeline.video.processor import generate as make_video
     from ..teaching.mediums import get_medium
     from ..teaching.lesson import build_lesson_plan
@@ -181,6 +182,11 @@ def run_pipeline(
     subj_mask = _run_silent("subject_mask", lambda: compute_subject_mask(img))
     subj_binary = (subj_mask > 0.5).astype(np.uint8) if subj_mask is not None else None
 
+    # ── Depth planes (optional local ML, Depth-Anything-V2) ───────────────────
+    # Foreground / middle-ground / background bands for atmospheric-perspective
+    # teaching. Returns a uint8 label map (0=far..2=near) or None (model absent).
+    depth_lbl = _run_silent("depth", lambda: compute_depth_planes(img, 3))
+
     # ── Steps 2-7: independent classic-analysis steps — run concurrently ──────
     # None of these six depend on each other's output (only dot_to_dot below
     # needs line_art's result), so running them in a thread pool instead of
@@ -229,6 +235,30 @@ def run_pipeline(
             Image.fromarray((np.clip(subj_mask, 0, 1) * 255).astype(np.uint8)).save(
                 str(out_dir / "subject_mask.png")
             )
+
+    # ── Depth Planes study (from Depth-Anything) ──────────────────────────────
+    # The three distance bands tinted over a desaturated base — foreground warm,
+    # background cool — so the learner sees the planes and the warm-near/cool-far
+    # rule of atmospheric perspective at a glance.
+    if depth_lbl is not None:
+        def _planes_study() -> Image.Image:
+            rgb  = np.asarray(img.convert("RGB"), dtype=np.float32)
+            gray = rgb.mean(axis=2, keepdims=True)
+            base = 0.5 * rgb + 0.5 * gray               # desaturate so tints read
+            tints = {
+                0: np.array([120, 150, 190], np.float32),  # far  → cool
+                1: np.array([200, 195, 185], np.float32),  # mid  → neutral
+                2: np.array([210, 150, 110], np.float32),  # near → warm
+            }
+            out = base.copy()
+            for lbl, tint in tints.items():
+                mask = (depth_lbl == lbl)[..., None]
+                out = np.where(mask, 0.7 * base + 0.3 * tint, out)
+            return Image.fromarray(np.clip(out, 0, 255).astype(np.uint8))
+
+        planes = run("depth_planes", _planes_study)
+        if planes:
+            pages.append(save("depth_planes", planes))
 
     notan_result = parallel_results.get("notan")
     if notan_result:

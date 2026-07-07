@@ -6,54 +6,90 @@ import * as THREE from "three";
 
 const BUST_URL = "/models/marble_bust_01/marble_bust_01_2k.gltf";
 
-/* The master's stroke: starts beside the bust's gaze, sweeps across the
-   foreground and dives off the bottom edge — where the painted SVG thread
-   in the page below picks it up. */
+/* The master's stroke: a single smooth sweep down the gap between the
+   headline and the bust, off the bottom edge — where the painted SVG thread
+   in the page below picks it up. A gentle S, no zigzag. Forward in z so it
+   reads in front of the bust. */
 const STROKE_POINTS: [number, number, number][] = [
-  [2.35, 0.55, -0.4],
-  [1.5, 0.95, 0.2],
-  [0.2, 0.75, 0.5],
-  [-1.3, 0.15, 0.3],
-  [-2.1, -0.75, 0.5],
-  [-1.1, -1.55, 0.9],
-  [0.15, -1.8, 1.1],
-  [0.55, -2.9, 1.3],
+  [0.78, 1.85, 1.25],
+  [1.05, 0.75, 1.3],
+  [0.82, -0.5, 1.32],
+  [1.05, -1.75, 1.34],
+  [0.84, -3.0, 1.36],
+  [0.98, -3.9, 1.38],
 ];
 
-/* Layered ribbons around one path = the ridged body of thick paint. */
-const RIDGES = [
-  { offset: 0.0,   radius: 0.15, color: "#b4511f", rough: 0.32 },
-  { offset: 0.105, radius: 0.085, color: "#d96b2f", rough: 0.26 },
-  { offset: -0.1,  radius: 0.075, color: "#8f3f18", rough: 0.38 },
-];
+const STROKE_COLOR = "#b4511f";
+const STROKE_EDGE = "#8f3f18";
+const HALF_WIDTH = 0.11;      // widest half-width of the loaded brush
+const DOME = 0.055;           // how far the ridge lifts toward camera (impasto)
+const SAMPLES = 260;
 
 const INTRO_TARGET = 0.72;   // how much of the stroke paints itself on load
 const INTRO_SPEED = 0.55;    // eased approach rate
 
-function makeCurve(offsetY: number) {
-  return new THREE.CatmullRomCurve3(
-    STROKE_POINTS.map(([x, y, z]) => new THREE.Vector3(x, y + offsetY, z)),
-    false,
-    "centripetal"
-  );
+const STROKE_CURVE = new THREE.CatmullRomCurve3(
+  STROKE_POINTS.map(([x, y, z]) => new THREE.Vector3(x, y, z)),
+  false,
+  "centripetal"
+);
+
+/* A real brushstroke is a flat, loaded ribbon: thin where the brush touches
+   down, full through the body, tapering off the lifted end — with a raised
+   central ridge so it catches light like wet impasto. TubeGeometry can't
+   taper, so we build the ribbon by hand: three rows (left / raised centre /
+   right) swept along the curve, ordered start→end so drawRange paints it. */
+function buildStrokeGeometry(): THREE.BufferGeometry {
+  const view = new THREE.Vector3(0, 0, 1); // camera looks down -z
+  const side = new THREE.Vector3();
+  const tan = new THREE.Vector3();
+  const p = new THREE.Vector3();
+
+  const pos: number[] = [];
+  const idx: number[] = [];
+
+  for (let i = 0; i < SAMPLES; i++) {
+    const t = i / (SAMPLES - 1);
+    STROKE_CURVE.getPoint(t, p);
+    STROKE_CURVE.getTangent(t, tan);
+    side.crossVectors(tan, view).normalize();
+
+    // width envelope: quick touch-down, full body, tapered lift-off
+    const touch = Math.min(1, t / 0.06);
+    const lift = 1 - Math.pow(Math.max(0, (t - 0.72) / 0.28), 1.5);
+    const w = HALF_WIDTH * touch * Math.max(0.05, lift);
+    const dome = DOME * touch * Math.max(0.05, lift);
+
+    // left, centre(raised toward camera), right
+    pos.push(p.x - side.x * w, p.y - side.y * w, p.z - side.z * w);
+    pos.push(p.x, p.y, p.z + dome);
+    pos.push(p.x + side.x * w, p.y + side.y * w, p.z + side.z * w);
+
+    if (i > 0) {
+      const a = (i - 1) * 3;
+      const b = i * 3;
+      // left quad
+      idx.push(a, a + 1, b, a + 1, b + 1, b);
+      // right quad
+      idx.push(a + 1, a + 2, b + 1, a + 2, b + 2, b + 1);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return geo;
 }
 
 function PaintStroke({ progress }: { progress: React.MutableRefObject<number> }) {
-  const meshRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const strokeRef = useRef<THREE.Mesh>(null);
+  const edgeRef = useRef<THREE.Mesh>(null);
   const brushRef = useRef<THREE.Group>(null);
-  const capRef = useRef<THREE.Mesh>(null);
 
-  const curves = useMemo(() => RIDGES.map(r => makeCurve(r.offset)), []);
-  const geometries = useMemo(
-    () =>
-      RIDGES.map((r, i) => {
-        const geo = new THREE.TubeGeometry(curves[i], 220, r.radius, 16, false);
-        geo.scale(1, 0.6, 1); // flatten: a loaded flat brush, not a noodle
-        return geo;
-      }),
-    [curves]
-  );
-  const indexCounts = useMemo(() => geometries.map(g => g.index!.count), [geometries]);
+  const geo = useMemo(() => buildStrokeGeometry(), []);
+  const edgeGeo = useMemo(() => geo.clone(), [geo]);
+  const totalIdx = geo.index!.count;
 
   const up = useMemo(() => new THREE.Vector3(0, 1, 0), []);
   const tangent = useMemo(() => new THREE.Vector3(), []);
@@ -61,50 +97,42 @@ function PaintStroke({ progress }: { progress: React.MutableRefObject<number> })
   const quat = useMemo(() => new THREE.Quaternion(), []);
 
   useFrame(() => {
-    const p = THREE.MathUtils.clamp(progress.current, 0.001, 1);
-    geometries.forEach((geo, i) => {
-      // TubeGeometry indices run along the path, so drawRange reveals the
-      // stroke exactly as a brush would lay it down.
-      const count = Math.floor((indexCounts[i] * p) / 6) * 6;
-      geo.setDrawRange(0, count);
-      const mesh = meshRefs.current[i];
-      if (mesh) mesh.visible = count > 0;
-    });
+    const p = THREE.MathUtils.clamp(progress.current, 0.0, 1);
+    // indices are ordered start→end, 12 per segment; reveal proportionally
+    const count = Math.floor((totalIdx * p) / 12) * 12;
+    geo.setDrawRange(0, count);
+    edgeGeo.setDrawRange(0, count);
+    if (strokeRef.current) strokeRef.current.visible = count > 0;
+    if (edgeRef.current) edgeRef.current.visible = count > 0;
 
-    // TubeGeometry samples the curve uniformly in parameter space (getPoint,
-    // not getPointAt), so the brush must do the same to sit on the wet end.
-    curves[0].getPoint(p, tip);
+    STROKE_CURVE.getPoint(p, tip);
     const brush = brushRef.current;
     if (brush) {
-      curves[0].getTangent(p, tangent);
-      brush.position.set(tip.x, tip.y + 0.06, tip.z + 0.04);
+      STROKE_CURVE.getTangent(p, tangent);
+      brush.position.set(tip.x, tip.y + 0.04, tip.z + 0.16);
       // Lean the handle back from the direction of travel, like a held brush
-      quat.setFromUnitVectors(up, tangent.clone().negate().add(new THREE.Vector3(0.25, 1.15, 0.55)).normalize());
+      quat.setFromUnitVectors(up, tangent.clone().negate().add(new THREE.Vector3(0.3, 1.1, 0.7)).normalize());
       brush.quaternion.slerp(quat, 0.25);
     }
-    const cap = capRef.current;
-    if (cap) cap.position.copy(tip);
   });
 
   return (
     <group>
-      {RIDGES.map((r, i) => (
-        <mesh key={i} ref={el => { meshRefs.current[i] = el; }} geometry={geometries[i]}>
-          <meshPhysicalMaterial
-            color={r.color}
-            roughness={r.rough}
-            clearcoat={1}
-            clearcoatRoughness={0.25}
-            sheen={0.4}
-            sheenColor={"#ffd9b0"}
-          />
-        </mesh>
-      ))}
-
-      {/* Rounded blob of wet paint hiding the tube's open end */}
-      <mesh ref={capRef} scale={[1.15, 0.72, 1.15]}>
-        <sphereGeometry args={[0.16, 20, 20]} />
-        <meshPhysicalMaterial color="#b4511f" roughness={0.3} clearcoat={1} clearcoatRoughness={0.25} />
+      {/* darker underside, very slightly behind → paint edge/shadow */}
+      <mesh ref={edgeRef} geometry={edgeGeo} position={[0, 0, -0.04]} scale={[1.12, 1.0, 1]}>
+        <meshStandardMaterial color={STROKE_EDGE} roughness={0.55} side={THREE.DoubleSide} />
+      </mesh>
+      {/* glossy wet body */}
+      <mesh ref={strokeRef} geometry={geo}>
+        <meshPhysicalMaterial
+          color={STROKE_COLOR}
+          roughness={0.3}
+          clearcoat={1}
+          clearcoatRoughness={0.2}
+          sheen={0.5}
+          sheenColor={"#ffd9b0"}
+          side={THREE.DoubleSide}
+        />
       </mesh>
 
       {/* The brush laying the stroke down */}
@@ -176,12 +204,14 @@ function Bust() {
 }
 
 function Scene({ reduced }: { reduced: boolean }) {
-  const progress = useRef(reduced ? 1 : 0);
+  // Start already painted to INTRO_TARGET so the stroke is visible on the very
+  // first frame; scroll only extends it toward 1 from there.
+  const progress = useRef(reduced ? 1 : INTRO_TARGET);
   const group = useRef<THREE.Group>(null);
 
   useFrame((state, dt) => {
     if (!reduced) {
-      // Paint the intro portion on load, then let scroll finish the stroke
+      // Extend the stroke from its painted-in start toward full as you scroll
       const scroll = Math.min(window.scrollY / Math.max(window.innerHeight, 1), 1);
       const target = INTRO_TARGET + (1 - INTRO_TARGET) * scroll;
       progress.current = THREE.MathUtils.damp(progress.current, target, INTRO_SPEED * 2.2, dt);

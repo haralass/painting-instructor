@@ -344,12 +344,14 @@ export default function HomePage() {
             </div>
 
             <div className="md:grid md:grid-cols-2 md:gap-14 relative">
-              {/* The canvas being painted — stays put while the stages scroll */}
-              <div className="md:sticky md:top-24 self-start mb-10 md:mb-0" style={{ zIndex: 2 }}>
-                <div className="rounded-sm overflow-hidden mx-auto"
+              {/* The canvas being painted — stays put while the stages scroll,
+                  on mobile too (smaller) so the "it evolves as you read" idea
+                  survives on a phone. Paper-coloured band hides stages behind. */}
+              <div className="sticky top-14 md:top-24 self-start z-10 mb-6 md:mb-0 pt-3 pb-4 md:py-0"
+                   style={{ background: "var(--bg)" }}>
+                <div className="rounded-sm overflow-hidden mx-auto w-full max-w-[220px] md:max-w-[560px]"
                      style={{
                        aspectRatio: "4/3",
-                       maxWidth: 560,
                        border: "10px solid var(--paper)",
                        outline: "1px solid var(--border-strong)",
                        boxShadow: "0 34px 80px rgba(63,48,28,0.18), 0 4px 14px rgba(63,48,28,0.1)",
@@ -358,7 +360,7 @@ export default function HomePage() {
                      }}>
                   <EvolvingCanvas stage={visualFor(activeStage)} seed={7} />
                 </div>
-                <p className="text-center text-sm mt-5 font-display italic" style={{ color: "var(--text-dim)" }}>
+                <p className="text-center text-xs md:text-sm mt-3 md:mt-5 font-display italic" style={{ color: "var(--text-dim)" }}>
                   {stages[activeStage]
                     ? <>Stage {String(stages[activeStage].order).padStart(2, "0")} — {stages[activeStage].name}</>
                     : "The blank canvas"}

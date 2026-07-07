@@ -736,7 +736,9 @@ class TestLessonPlanAndPdfBook:
         from backend.teaching.mediums import get_medium
         from backend.teaching.lesson import build_lesson_plan
         from backend.teaching.pdf_book import build_tutorial_pdf
-        from pypdf import PdfReader
+        # pypdf is a test-only reader (production writes PDFs with fpdf2); skip
+        # gracefully where it isn't installed rather than failing the suite.
+        PdfReader = pytest.importorskip("pypdf").PdfReader
 
         img, out_dir, hier, classic_pages = self._hier_and_classic(tmp_path, "oil")
         ref_path = out_dir / "reference.png"

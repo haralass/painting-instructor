@@ -32,7 +32,7 @@ from backend.api.main import app, OUTPUTS_DIR
 from backend.workers.tasks import celery_app, run_pipeline
 
 
-def _fake_line_art(img):
+def _fake_line_art(img, resolution=1024, fg_mask=None):
     """Stand-in for line_art.processor.process_with_mask — no DexiNed/rembg download."""
     return img.convert("L").convert("RGB"), np.ones((img.size[1], img.size[0]), dtype=np.uint8) * 255
 

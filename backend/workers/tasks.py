@@ -77,6 +77,7 @@ def run_pipeline(
      11. pdf              — A4 book of all pages that succeeded
      12. manifest         — manifest.json describing all outputs
     """
+    import numpy as np
     from PIL import Image
 
     from ..preprocessing.processor import load_image
@@ -86,6 +87,7 @@ def run_pipeline(
     )
     from ..pipeline.color_by_number.processor import process as color_by_number
     from ..pipeline.dot_to_dot.processor import process as dot_to_dot
+    from ..analysis.subject import subject_mask as compute_subject_mask
     from ..pipeline.video.processor import generate as make_video
     from ..teaching.mediums import get_medium
     from ..teaching.lesson import build_lesson_plan
@@ -173,6 +175,12 @@ def run_pipeline(
     ref_path = str(out_dir / f"reference{suffix}")
     shutil.copy2(img_path, ref_path)
 
+    # ── Subject mask (optional local ML, bundled U²-Netp) ─────────────────────
+    # Computed once up front: it feeds line-art's silhouette AND its own focal
+    # study below. Returns a float [0,1] mask or None (onnxruntime/model absent).
+    subj_mask = _run_silent("subject_mask", lambda: compute_subject_mask(img))
+    subj_binary = (subj_mask > 0.5).astype(np.uint8) if subj_mask is not None else None
+
     # ── Steps 2-7: independent classic-analysis steps — run concurrently ──────
     # None of these six depend on each other's output (only dot_to_dot below
     # needs line_art's result), so running them in a thread pool instead of
@@ -181,7 +189,7 @@ def run_pipeline(
     # `run()` still records each step's own progress/timing/errors exactly as
     # it did when called sequentially.
     parallel_jobs = {
-        "line_art":          lambda: line_art_with_mask(img),
+        "line_art":          lambda: line_art_with_mask(img, fg_mask=subj_binary),
         "notan":             lambda: notan(img, zones=value_zones),
         "color_temperature": lambda: color_temperature(img),
         "color_palette":     lambda: color_palette(img, n_colors=palette_size),
@@ -201,6 +209,26 @@ def run_pipeline(
     if la_out:
         la_result, fg_mask = la_out
         pages.append(save("line_art", la_result))
+
+    # ── Focal Subject study (from the U²-Net mask) ────────────────────────────
+    # Subject kept in full colour, background desaturated and lifted toward the
+    # paper — a focal-point teaching aid ("this is what the eye must land on").
+    if subj_mask is not None:
+        def _focal_subject() -> Image.Image:
+            rgb  = np.asarray(img.convert("RGB"), dtype=np.float32)
+            m    = np.clip(subj_mask, 0.0, 1.0)[..., None]
+            gray = rgb.mean(axis=2, keepdims=True)
+            muted = 0.55 * gray + 0.45 * 245.0          # desaturate + lighten
+            out  = rgb * m + muted * (1.0 - m)
+            return Image.fromarray(np.clip(out, 0, 255).astype(np.uint8))
+
+        focal = run("subject_focus", _focal_subject)
+        if focal:
+            pages.append(save("subject_focus", focal))
+            # keep the raw mask around for teaching (focal weighting), not as a page
+            Image.fromarray((np.clip(subj_mask, 0, 1) * 255).astype(np.uint8)).save(
+                str(out_dir / "subject_mask.png")
+            )
 
     notan_result = parallel_results.get("notan")
     if notan_result:

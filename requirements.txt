@@ -16,6 +16,10 @@ scikit-learn>=1.4
 scikit-image>=0.23
 scipy>=1.12
 
+# Local ML tier — bundled U²-Netp ONNX subject mask (CPU, ~4.6 MB model).
+# Optional: the pipeline degrades gracefully to no subject mask without it.
+onnxruntime>=1.17
+
 # Colorimetry
 colour-science>=0.4.4
 

@@ -89,7 +89,8 @@ def _classical_line_art(img_rgb: np.ndarray) -> Image.Image:
     return Image.fromarray(out).convert("RGB")
 
 
-def _process_internal(img: Image.Image, resolution: int = 1024) -> tuple[Image.Image, np.ndarray | None]:
+def _process_internal(img: Image.Image, resolution: int = 1024,
+                      fg_mask: np.ndarray | None = None) -> tuple[Image.Image, np.ndarray | None]:
     """
     Professional-grade composite line art for artists.
 
@@ -110,17 +111,24 @@ def _process_internal(img: Image.Image, resolution: int = 1024) -> tuple[Image.I
     img_rgb = np.array(img.convert("RGB"))
 
     # ── Subject mask ──────────────────────────────────────────────────────
-    global _rembg_sess
-    fg_mask = None
-    try:
-        from rembg import remove, new_session
-        if _rembg_sess is None:
-            _rembg_sess = new_session("birefnet-portrait")
-        rgba    = remove(img, session=_rembg_sess)
-        alpha   = np.array(rgba)[:, :, 3]
-        fg_mask = (alpha > 128).astype(np.uint8)
-    except Exception:
-        fg_mask = np.ones((H, W), dtype=np.uint8)
+    # Prefer a mask the caller already computed (the pipeline's bundled U²-Net
+    # subject step); only reach for the heavy optional rembg model if none was
+    # supplied, and fall back to "whole frame" if neither is available.
+    if fg_mask is not None:
+        fg_mask = (np.asarray(fg_mask) > 0).astype(np.uint8)
+        if fg_mask.shape != (H, W):
+            fg_mask = cv2.resize(fg_mask, (W, H), interpolation=cv2.INTER_NEAREST)
+    else:
+        global _rembg_sess
+        try:
+            from rembg import remove, new_session
+            if _rembg_sess is None:
+                _rembg_sess = new_session("birefnet-portrait")
+            rgba    = remove(img, session=_rembg_sess)
+            alpha   = np.array(rgba)[:, :, 3]
+            fg_mask = (alpha > 128).astype(np.uint8)
+        except Exception:
+            fg_mask = np.ones((H, W), dtype=np.uint8)
 
     # ── Layer 2: interior detail ──────────────────────────────────────────
     try:
@@ -175,9 +183,13 @@ def process(img: Image.Image, resolution: int = 1024) -> Image.Image:
     return result
 
 
-def process_with_mask(img: Image.Image, resolution: int = 1024) -> tuple[Image.Image, np.ndarray | None]:
-    """Returns (line_art_image, fg_mask) — use when dot_to_dot needs the mask."""
-    return _process_internal(img, resolution)
+def process_with_mask(img: Image.Image, resolution: int = 1024,
+                      fg_mask: np.ndarray | None = None) -> tuple[Image.Image, np.ndarray | None]:
+    """Returns (line_art_image, fg_mask) — use when dot_to_dot needs the mask.
+
+    Pass ``fg_mask`` to reuse a subject mask already computed upstream instead
+    of loading a segmentation model here."""
+    return _process_internal(img, resolution, fg_mask=fg_mask)
 
 
 def detect_raw(img: Image.Image, resolution: int = 1024) -> Image.Image:

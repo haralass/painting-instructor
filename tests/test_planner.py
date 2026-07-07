@@ -144,6 +144,188 @@ class TestAttachImageNotes:
         joined = " ".join(last["image_notes"])
         assert "lower right" in joined and "simplify" in joined.lower()
 
+    def test_image_notes_still_present_alongside_micro_steps(self, regions):
+        brief = build_image_brief(regions, PALETTE, ZONES, 135.0, W, H, "oil")
+        steps = attach_image_notes(self._steps(), brief, "oil")
+        # both fields exist on every step; image_notes behaviour unchanged
+        assert all("image_notes" in s for s in steps)
+        assert all("image_micro_steps" in s for s in steps)
+        first = next(s for s in steps if 1 <= s["order"] < 90)
+        assert "burnt sienna" in " ".join(first["image_notes"])
+
+
+# ── 5+ masses so every mass must surface as its own ordered micro-step ────────
+
+ZONES5 = [
+    {"id": 0, "label": "shadow",     "grey_value": 30},
+    {"id": 1, "label": "dark",       "grey_value": 80},
+    {"id": 2, "label": "midtone",    "grey_value": 128},
+    {"id": 3, "label": "light",      "grey_value": 185},
+    {"id": 4, "label": "highlight",  "grey_value": 235},
+]
+
+
+@pytest.fixture
+def regions5():
+    """Five level-1 masses at distinct value zones and locations."""
+    return [
+        _region(1, "l1", W * 0.15, H * 0.85, int(W * H * 0.30), rgb=(110, 55, 35),  zone=0),
+        _region(2, "l1", W * 0.50, H * 0.10, int(W * H * 0.24), rgb=(235, 228, 205), zone=4),
+        _region(3, "l1", W * 0.85, H * 0.50, int(W * H * 0.18), rgb=(120, 150, 205), zone=2),
+        _region(4, "l1", W * 0.40, H * 0.45, int(W * H * 0.14), rgb=(90, 115, 70),   zone=1),
+        _region(5, "l1", W * 0.10, H * 0.20, int(W * H * 0.10), rgb=(200, 180, 150), zone=3),
+    ]
+
+
+class TestImageMicroSteps:
+    def _steps(self, medium="oil"):
+        cfg = get_medium(medium)
+        return build_lesson_plan(
+            medium_cfg=cfg, medium=medium,
+            detail_levels={str(i): {"values": f"l{i}v.png", "colours": f"l{i}c.png",
+                                    "outlines": f"l{i}o.png", "regions": f"l{i}r.png"}
+                           for i in range(1, 6)},
+            outline_composites={k: f"{k}.png" for k in
+                                ("outlines_primary", "outlines_primary_secondary",
+                                 "outlines_detailed", "outlines_full")},
+            value_zones_map="zones.png",
+            classic_pages=["j/notan.png", "j/color_temperature.png", "j/color_by_number.png"],
+            skill_level="intermediate",
+        )
+
+    def _all_micro(self, steps):
+        return [ms for s in steps for ms in s["image_micro_steps"]]
+
+    def test_every_step_has_micro_steps_field(self, regions5):
+        brief = build_image_brief(regions5, PALETTE, ZONES5, 135.0, W, H, "oil")
+        steps = attach_image_notes(self._steps("oil"), brief, "oil")
+        assert all(isinstance(s.get("image_micro_steps"), list) for s in steps)
+
+    def test_every_mass_appears_exactly_once(self, regions5):
+        brief = build_image_brief(regions5, PALETTE, ZONES5, 135.0, W, H, "oil")
+        steps = attach_image_notes(self._steps("oil"), brief, "oil")
+        micro = self._all_micro(steps)
+        ids = [m["region_id"] for m in micro]
+        assert sorted(ids) == [1, 2, 3, 4, 5]
+        assert len(ids) == len(set(ids)) == 5
+
+    def test_order_is_sequential_within_the_step(self, regions5):
+        brief = build_image_brief(regions5, PALETTE, ZONES5, 135.0, W, H, "oil")
+        steps = attach_image_notes(self._steps("oil"), brief, "oil")
+        # micro-steps land on exactly one step
+        carriers = [s for s in steps if s["image_micro_steps"]]
+        assert len(carriers) == 1
+        orders = [m["order"] for m in carriers[0]["image_micro_steps"]]
+        assert orders == [1, 2, 3, 4, 5]
+
+    def test_dark_first_direction_for_oil(self, regions5):
+        brief = build_image_brief(regions5, PALETTE, ZONES5, None, W, H, "oil")
+        steps = attach_image_notes(self._steps("oil"), brief, "oil")
+        micro = self._all_micro(steps)
+        # darkest mass (zone 0, region 1) is blocked in first
+        assert micro[0]["region_id"] == 1
+        # strictly non-decreasing grey along the sequence (dark → light)
+        greys = [_grey_of(m["region_id"]) for m in micro]
+        assert greys == sorted(greys)
+
+    def test_light_first_direction_for_watercolor(self, regions5):
+        brief = build_image_brief(regions5, PALETTE, ZONES5, None, W, H, "watercolor")
+        steps = attach_image_notes(self._steps("watercolor"), brief, "watercolor")
+        micro = self._all_micro(steps)
+        # lightest mass (zone 4, region 2) is washed in first
+        assert micro[0]["region_id"] == 2
+        greys = [_grey_of(m["region_id"]) for m in micro]
+        assert greys == sorted(greys, reverse=True)
+
+    def test_micro_step_shape_matches_contract(self, regions5):
+        brief = build_image_brief(regions5, PALETTE, ZONES5, 135.0, W, H, "oil")
+        steps = attach_image_notes(self._steps("oil"), brief, "oil")
+        m = self._all_micro(steps)[0]
+        assert set(m.keys()) == {
+            "order", "region_id", "location", "value_label",
+            "colour_name", "area_frac", "action", "mix_hint",
+        }
+        assert isinstance(m["order"], int) and m["order"] >= 1
+        assert isinstance(m["region_id"], int)
+        assert isinstance(m["location"], str) and m["location"]
+        assert isinstance(m["value_label"], str) and m["value_label"]
+        assert isinstance(m["colour_name"], str) and m["colour_name"]
+        assert isinstance(m["area_frac"], float)
+        assert isinstance(m["action"], str) and m["action"].endswith(".")
+        assert m["mix_hint"] is None or isinstance(m["mix_hint"], str)
+
+    def test_mix_hint_present_for_paint_medium_null_for_digital(self, regions5):
+        oil_brief = build_image_brief(regions5, PALETTE, ZONES5, None, W, H, "oil")
+        oil_steps = attach_image_notes(self._steps("oil"), oil_brief, "oil")
+        assert any(m["mix_hint"] for m in self._all_micro(oil_steps))
+
+        dig_brief = build_image_brief(regions5, PALETTE, ZONES5, None, W, H, "digital")
+        dig_steps = attach_image_notes(self._steps("digital"), dig_brief, "digital")
+        assert all(m["mix_hint"] is None for m in self._all_micro(dig_steps))
+
+    def test_micro_steps_attached_to_early_block_in_not_ground_or_detail(self, regions5):
+        brief = build_image_brief(regions5, PALETTE, ZONES5, None, W, H, "oil")
+        steps = attach_image_notes(self._steps("oil"), brief, "oil")
+        carrier = next(s for s in steps if s["image_micro_steps"])
+        # oil: order 1 is the toned-ground, order >= 5 are edge/detail
+        assert carrier["order"] == 2
+
+    def test_empty_when_no_masses(self):
+        brief = build_image_brief([], PALETTE, ZONES5, None, W, H, "oil")
+        steps = attach_image_notes(
+            build_lesson_plan(
+                medium_cfg=get_medium("oil"), medium="oil",
+                detail_levels={}, outline_composites={},
+                value_zones_map="z.png", classic_pages=["j/notan.png"],
+                skill_level="intermediate",
+            ),
+            brief, "oil",
+        )
+        assert all(s["image_micro_steps"] == [] for s in steps)
+
+
+def _grey_of(region_id: int) -> int:
+    """Grey value for a regions5 region id, via its zone mapping."""
+    zone_by_region = {1: 0, 2: 4, 3: 2, 4: 1, 5: 3}
+    grey_by_zone = {z["id"]: z["grey_value"] for z in ZONES5}
+    return grey_by_zone[zone_by_region[region_id]]
+
+
+class TestNoSilentResolutionFailures:
+    """Every stage of every medium must resolve to at least one real asset —
+    guards against the color_temperature drop (and any future layer that fails
+    to resolve like it)."""
+
+    def _detail_levels(self):
+        return {str(i): {"values": f"l{i}v.png", "colours": f"l{i}c.png",
+                         "outlines": f"l{i}o.png", "regions": f"l{i}r.png"}
+                for i in range(1, 6)}
+
+    def _outline_composites(self):
+        return {k: f"{k}.png" for k in
+                ("outlines_primary", "outlines_primary_secondary",
+                 "outlines_detailed", "outlines_full")}
+
+    @pytest.mark.parametrize(
+        "medium", ["oil", "watercolor", "acrylic", "pencil", "charcoal", "digital"]
+    )
+    def test_every_stage_yields_non_empty_assets(self, medium):
+        steps = build_lesson_plan(
+            medium_cfg=get_medium(medium), medium=medium,
+            detail_levels=self._detail_levels(),
+            outline_composites=self._outline_composites(),
+            value_zones_map="zones.png",
+            # NOTE: color_temperature / color_by_number pages deliberately
+            # absent — they must still resolve via the canonical sibling path.
+            classic_pages=["j/notan.png"],
+            skill_level="intermediate",
+        )
+        for s in steps:
+            if 1 <= s["order"] < 90:  # skip inserted warm-up/critique steps
+                assert s["assets"], (
+                    f"{medium} stage {s['order']} ({s['name']}) resolved no assets"
+                )
+
 
 class TestSkillLevels:
     def _steps(self, skill):

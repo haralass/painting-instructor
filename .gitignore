@@ -18,6 +18,9 @@ outputs/
 *.pth
 *.ckpt
 *.pt
+# Large ML-tier model — fetch with scripts/fetch_models.py. (u2netp.onnx ~4.6 MB
+# stays committed; the ~99 MB depth model is too big for git / GitHub's limit.)
+backend/models/depth_anything_v2_vits.onnx
 
 # Node
 node_modules/

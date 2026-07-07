@@ -338,6 +338,28 @@ def run_pipeline(
         errors["image_brief"] = tb
         log.warning("Image brief failed:\n%s", tb)
 
+    # ── Build medium_cfg + lesson_plan ONCE ──────────────────────────────────
+    # The plan was previously built three times (prelim manifest, this
+    # absolute-path copy for the video/PDF, and again inside the final
+    # _build_manifest) — each re-running attach_image_notes, so the copies
+    # could silently diverge. Build the absolute-path plan here once, then
+    # derive the outputs-relative form the manifest needs from it, so the two
+    # path forms are guaranteed identical apart from the paths themselves.
+    medium_cfg = get_medium(medium)
+    classic_pages = [p for p in pages if not _is_hierarchical_asset(p) and p]
+    lesson_plan_abs = build_lesson_plan(
+        medium_cfg=medium_cfg,
+        medium=medium,
+        detail_levels=hier.get("detail_levels", {}),
+        outline_composites=hier.get("outline_composites", {}),
+        value_zones_map=hier.get("value_zones_path"),
+        classic_pages=classic_pages,
+        skill_level=skill_level,
+    )
+    if image_brief:
+        lesson_plan_abs = attach_image_notes(lesson_plan_abs, image_brief, medium)
+    lesson_plan_rel = _relativize_lesson_plan(lesson_plan_abs)
+
     # Write preliminary manifest immediately after hierarchical succeeds
     manifest_path = out_dir / "manifest.json"
     progress("analysis_ready")
@@ -360,25 +382,10 @@ def run_pipeline(
         background_detail=background_detail,
         skill_level=skill_level,
         image_brief=image_brief,
+        lesson_plan=lesson_plan_rel,
     )
     prelim_manifest["status"] = "analysis_ready"
     manifest_path.write_text(json.dumps(prelim_manifest, indent=2))
-
-    # ── Build medium_cfg + lesson_plan once (absolute paths) — shared by
-    #    both the video (chapter labels/images) and the PDF (tutorial book) ──
-    medium_cfg = get_medium(medium)
-    classic_pages = [p for p in pages if not _is_hierarchical_asset(p) and p]
-    lesson_plan_abs = build_lesson_plan(
-        medium_cfg=medium_cfg,
-        medium=medium,
-        detail_levels=hier.get("detail_levels", {}),
-        outline_composites=hier.get("outline_composites", {}),
-        value_zones_map=hier.get("value_zones_path"),
-        classic_pages=classic_pages,
-        skill_level=skill_level,
-    )
-    if image_brief:
-        lesson_plan_abs = attach_image_notes(lesson_plan_abs, image_brief, medium)
 
     # ── Step 9b: Personal observations — one vision call grounded in this
     #    job's actual palette/value zones/region count, unlike every other
@@ -479,6 +486,7 @@ def run_pipeline(
         image_brief=image_brief,
         video_chapters=video_chapters,
         personal_observations=personal_observations,
+        lesson_plan=lesson_plan_rel,
     )
     manifest_path.write_text(json.dumps(manifest, indent=2))
 
@@ -567,6 +575,24 @@ def _normalize_detail_levels(detail_levels: dict) -> dict:
     return result
 
 
+def _relativize_lesson_plan(lesson_plan: list[dict]) -> list[dict]:
+    """
+    Derive the outputs-relative form of an absolute-path lesson plan.
+
+    Only the asset path strings differ between the two forms — step order,
+    name, level, resolved asset *keys*, and the image notes/micro-steps are
+    identical. Deriving instead of rebuilding guarantees they cannot diverge.
+    """
+    rel_plan: list[dict] = []
+    for step in lesson_plan:
+        rel_step = dict(step)
+        rel_step["assets"] = {
+            k: rel_to_outputs(v) for k, v in step.get("assets", {}).items()
+        }
+        rel_plan.append(rel_step)
+    return rel_plan
+
+
 def _build_manifest(
     job_id: str,
     img,
@@ -588,6 +614,7 @@ def _build_manifest(
     image_brief: dict | None = None,
     video_chapters: list[dict] | None = None,
     personal_observations: str | None = None,
+    lesson_plan: list[dict] | None = None,
 ) -> dict:
     w, h = img.size
 
@@ -634,23 +661,28 @@ def _build_manifest(
     }
 
     from ..teaching.mediums import get_medium as _get_medium_for_manifest
-    from ..teaching.lesson import build_lesson_plan
     medium_cfg = _get_medium_for_manifest(medium)
     manifest["teaching_stages"]       = medium_cfg.get("stages", [])
     manifest["teaching_instructions"] = medium_cfg.get("instructions", {})
-    lesson_steps = build_lesson_plan(
-        medium_cfg=medium_cfg,
-        medium=medium,
-        detail_levels=manifest["detail_levels"],
-        outline_composites=outline_composites_rel,
-        value_zones_map=value_zones_map,
-        classic_pages=classic_pages,
-        skill_level=skill_level,
-    )
-    if image_brief:
-        from ..teaching.planner import attach_image_notes as _attach_notes
-        lesson_steps = _attach_notes(lesson_steps, image_brief, medium)
-    manifest["lesson_plan"] = lesson_steps
+
+    # The lesson plan is built once by the caller (absolute paths) and passed
+    # in already relativised, so the manifest and the video/PDF copies cannot
+    # diverge. Fall back to building it here only if a caller omits it.
+    if lesson_plan is None:
+        from ..teaching.lesson import build_lesson_plan
+        lesson_plan = build_lesson_plan(
+            medium_cfg=medium_cfg,
+            medium=medium,
+            detail_levels=manifest["detail_levels"],
+            outline_composites=outline_composites_rel,
+            value_zones_map=value_zones_map,
+            classic_pages=classic_pages,
+            skill_level=skill_level,
+        )
+        if image_brief:
+            from ..teaching.planner import attach_image_notes as _attach_notes
+            lesson_plan = _attach_notes(lesson_plan, image_brief, medium)
+    manifest["lesson_plan"] = lesson_plan
     manifest["image_brief"] = image_brief or {}
 
     return manifest

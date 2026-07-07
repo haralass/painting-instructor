@@ -241,7 +241,10 @@ async def critique_job(job_id: str, file: UploadFile):
 # ── GET /jobs/{job_id}/pdf ────────────────────────────────────────────────────
 @app.get("/jobs/{job_id}/pdf")
 def download_pdf(job_id: str):
-    pdf_path = OUTPUTS_DIR / job_id / "tutorial_book.pdf"
+    # Resolve outputs_root() fresh (like create_job / critique_job) so an
+    # env override applied after import is respected, instead of the stale
+    # module-level OUTPUTS_DIR captured at import time.
+    pdf_path = outputs_root() / job_id / "tutorial_book.pdf"
     if not pdf_path.exists():
         raise HTTPException(404, "PDF not ready yet")
     return FileResponse(pdf_path, media_type="application/pdf", filename="tutorial_book.pdf")

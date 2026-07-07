@@ -120,12 +120,14 @@ def build_image_brief(
         area_frac = r.get("area", 0) / total_px
         if area_frac < 0.02:
             continue  # sub-2% slivers are noise, not paintable masses
+        mean_rgb = tuple(int(c) for c in r.get("mean_rgb", (128, 128, 128)))
         masses.append({
             "region_id":   r.get("id"),
             "location":    _loc_word(cx, cy),
             "cx": round(cx, 3), "cy": round(cy, 3),
             "area_frac":   round(area_frac, 3),
-            "colour_name": _nearest_palette_name(tuple(r.get("mean_rgb", (128, 128, 128))), palette),
+            "mean_rgb":    list(mean_rgb),  # kept for deterministic mix-hint lookup
+            "colour_name": _nearest_palette_name(mean_rgb, palette),
             "value_zone":  r.get("value_zone", 0),
             "value_label": _zone_label(r.get("value_zone", 0), value_zone_list),
             "grey":        _zone_grey(r.get("value_zone", 0), value_zone_list),
@@ -259,6 +261,52 @@ def _overview_text(brief: dict, medium: str) -> str:
 
 # ── Attaching notes to lesson steps ──────────────────────────────────────────
 
+def _mix_hint_for(mean_rgb, medium: str) -> str | None:
+    """
+    Short paint-mixing recipe hint for a mass's mean colour, from the local
+    Kubelka-Munk mixer. Only for physical-paint mediums; None otherwise or if
+    the mixer is unavailable / the colour can't be resolved.
+    """
+    try:
+        from .mixing import MIXING_MEDIUMS, recipe_for
+    except Exception:
+        return None
+    if medium not in MIXING_MEDIUMS or not mean_rgb:
+        return None
+    try:
+        return recipe_for(tuple(int(c) for c in mean_rgb)).get("text")
+    except Exception:
+        return None
+
+
+def _build_micro_steps(order: list[dict], brief: dict, medium: str) -> list[dict]:
+    """
+    One structured, ordered painting instruction per mass, in the medium's
+    block-in direction. Uses ALL masses in `block_in_order` (not a truncated
+    slice). `order` is 1-based within the step. Empty list when no masses.
+    """
+    light_first = brief.get("block_in_light_first", False)
+    verb = "Wash in" if light_first else "Block in"
+    micro: list[dict] = []
+    for i, m in enumerate(order, start=1):
+        pct = round(m["area_frac"] * 100)
+        action = (
+            f"{verb} the {m['value_label']} {m['colour_name']} mass "
+            f"in the {m['location']} (~{pct}%)."
+        )
+        micro.append({
+            "order":       i,
+            "region_id":   m.get("region_id"),
+            "location":    m.get("location"),
+            "value_label": m.get("value_label"),
+            "colour_name": m.get("colour_name"),
+            "area_frac":   m.get("area_frac"),
+            "action":      action,
+            "mix_hint":    _mix_hint_for(m.get("mean_rgb"), medium),
+        })
+    return micro
+
+
 def attach_image_notes(steps: list[dict], brief: dict, medium: str) -> list[dict]:
     """
     Give each lesson step 1-3 sentences about THIS image. Placement is driven
@@ -272,13 +320,46 @@ def attach_image_notes(steps: list[dict], brief: dict, medium: str) -> list[dict
     busy = brief.get("busy_areas", [])
     light_from = brief.get("light", {}).get("from")
 
+    real_orders = [s.get("order", 0) for s in steps if 1 <= s.get("order", 0) < 90]
     max_order = max((s.get("order", 0) for s in steps), default=0)
+    # A real step, identified by its own order rather than object identity —
+    # the previous `step is next(...)` check broke whenever the list was copied.
+    min_real_order = min(real_orders) if real_orders else None
+
+    # The full ordered micro-step list attaches to exactly ONE step — the early
+    # block-in/value stage — so each mass appears once overall. Target the
+    # earliest real value-carrying step that is neither the ground/first
+    # planning step (min_real_order) nor an edge/detail step (level >= 4);
+    # fall back to any real value step, then to the first real step.
+    micro_target_order: int | None = None
+    value_steps = [
+        s for s in steps
+        if 1 <= s.get("order", 0) < 90 and "values" in " ".join(s.get("assets", {}).keys())
+    ]
+    early_block_in = [
+        s for s in value_steps
+        if s.get("order") != min_real_order and s.get("level", 1) < 4
+    ]
+    if early_block_in:
+        micro_target_order = min(s["order"] for s in early_block_in)
+    elif value_steps:
+        micro_target_order = min(s["order"] for s in value_steps)
+    elif min_real_order is not None:
+        micro_target_order = min_real_order
 
     for step in steps:
         notes: list[str] = []
         keys = " ".join(step.get("assets", {}).keys())
         lvl = step.get("level", 1)
-        first_real = step is next((s for s in steps if 1 <= s.get("order", 0) < 90), None)
+        first_real = step.get("order") == min_real_order
+
+        # Structured, ordered micro-steps: default empty; the full list lands on
+        # the single chosen block-in/value step.
+        step["image_micro_steps"] = (
+            _build_micro_steps(order, brief, medium)
+            if order and step.get("order") == micro_target_order
+            else []
+        )
 
         # Early structural steps: where to start, and the light
         if first_real or lvl <= 1:

@@ -10,6 +10,15 @@ _GLOBAL_OUTLINE_KEYS = {
     "outlines_primary", "outlines_primary_secondary", "outlines_detailed", "outlines_full",
 }
 
+# Classic-pipeline pages that mediums reference directly as an analysis layer
+# (e.g. oil/digital stage 4 -> "color_temperature", digital/acrylic stage 3 ->
+# "color_by_number"). These are single, well-known per-job pages saved as
+# "<stem>.png" next to every other classic page, so they resolve to that path
+# even when the classic step itself failed to enter `classic_pages` — otherwise
+# every oil/digital job logged "could not resolve analysis_layer 'color_temperature'"
+# and silently dropped the asset.
+_CLASSIC_PAGE_LAYERS = {"color_temperature", "color_by_number"}
+
 
 def build_lesson_plan(
     medium_cfg: dict,
@@ -30,11 +39,17 @@ def build_lesson_plan(
     normalisation), so the result can be embedded directly in manifest.json.
     """
     classic_by_stem: dict[str, str] = {}
+    classic_dir: str | None = None
     for p in classic_pages:
         if not p:
             continue
         stem = p.rsplit("/", 1)[-1].rsplit(".", 1)[0]
         classic_by_stem[stem] = p
+        # Remember the shared job directory so classic-page layers whose own
+        # page failed to reach `classic_pages` can still resolve to the
+        # canonical "<dir>/<stem>.png" location (all classic pages share it).
+        if classic_dir is None and "/" in p:
+            classic_dir = p.rsplit("/", 1)[0]
 
     steps: list[dict] = []
     for stage in medium_cfg.get("stages", []):
@@ -73,6 +88,14 @@ def build_lesson_plan(
 
             if layer_key in classic_by_stem:
                 assets[layer_key] = classic_by_stem[layer_key]
+                continue
+
+            # A well-known classic page referenced as a layer, whose own page
+            # did not make it into `classic_pages` this run (step failed, or
+            # was pruned). Resolve to its canonical sibling path so the lesson
+            # step still points somewhere instead of dropping the asset.
+            if layer_key in _CLASSIC_PAGE_LAYERS and classic_dir:
+                assets[layer_key] = f"{classic_dir}/{layer_key}.png"
                 continue
 
             log.warning(

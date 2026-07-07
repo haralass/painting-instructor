@@ -37,6 +37,7 @@ def _test_image(w: int = 200, h: int = 200) -> Image.Image:
 @pytest.fixture(scope="module")
 def pipeline_result():
     """Run the pipeline once for all e2e tests."""
+    import os
     from backend.workers.tasks import run_pipeline
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -46,26 +47,28 @@ def pipeline_result():
         img_path = str(Path(tmpdir) / f"{job_id}.jpg")
         img.save(img_path, format="JPEG")
 
-        # Monkeypatch OUTPUTS_DIR
-        import backend.workers.tasks as tasks_mod
-        import os
-        orig_getcwd = os.getcwd
+        # run_pipeline resolves OUTPUTS_DIR relative to cwd ("outputs"), so run
+        # it from tmpdir. Restore cwd in `finally` no matter what — leaving cwd
+        # inside a to-be-deleted tmpdir poisons every later test in the suite.
+        orig_cwd = os.getcwd()
+        # Called outside a Celery worker, so self.update_state would reach for
+        # the result backend; stub it for this broker-free direct invocation.
+        orig_update = run_pipeline.update_state
+        run_pipeline.update_state = lambda *a, **k: None
         os.chdir(tmpdir)
-
-        from unittest.mock import MagicMock
-        mock_self = MagicMock()
-        mock_self.update_state = MagicMock()
-        result = run_pipeline.__wrapped__(
-            mock_self,
-            img_path,
-            job_id,
-            medium="oil",
-            palette_size=6,
-            initial_view_level=3,
-            value_zones=3,
-        )
-
-        os.chdir(orig_getcwd())
+        try:
+            # Celery binds `self` itself, so __wrapped__ takes no self argument.
+            result = run_pipeline.__wrapped__(
+                img_path,
+                job_id,
+                medium="oil",
+                palette_size=6,
+                initial_view_level=3,
+                value_zones=3,
+            )
+        finally:
+            os.chdir(orig_cwd)
+            run_pipeline.update_state = orig_update
 
         yield result, Path(tmpdir) / "outputs" / job_id, job_id
 

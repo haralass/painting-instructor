@@ -38,6 +38,11 @@ const PAGE_LABELS: Record<string, { title: string; why: string; tip: string }> =
     why:   "Every painting starts with clear structure. These lines define the silhouette (thickest, most important), interior forms (medium weight), and background texture (lightest).",
     tip:   "Transfer these outlines to your canvas with light charcoal. Don't press hard — you'll erase them as you paint.",
   },
+  subject_focus: {
+    title: "Focal Subject",
+    why:   "A local segmentation model isolates your subject from its background. The eye should land here first — keep this area the sharpest, most saturated, and highest in contrast.",
+    tip:   "Paint the muted areas first and loosely; save your cleanest colour, hardest edges, and thickest paint for the subject.",
+  },
   notan: {
     title: "Value Study (Notan)",
     why:   "Notan is a Japanese design concept — before you touch colour, you must get your lights and darks right. A painting with correct values reads in black and white.",

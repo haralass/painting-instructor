@@ -40,6 +40,20 @@ class _UnionFind:
         self.parent[ry] = new_id
 
 
+# Value (L*) differences count double in the merge cost. Plain ΔE weights
+# lightness equally with hue, which merged dark rock into lit green grass —
+# same-ish chroma, wildly different value — collapsing the painting's value
+# design into one mass at coarse levels. Painters organise by value first.
+_VALUE_WEIGHT = 3.0
+
+
+def _value_weighted_lab_dist(lab_a, lab_b) -> float:
+    dl = (float(lab_a[0]) - float(lab_b[0])) * _VALUE_WEIGHT
+    da = float(lab_a[1]) - float(lab_b[1])
+    db = float(lab_a[2]) - float(lab_b[2])
+    return float(np.sqrt(dl * dl + da * da + db * db))
+
+
 def build_region_hierarchy(
     cache: ImageCache,
     palette_size: int,
@@ -189,7 +203,7 @@ def _build_merge_tree_hierarchy(
             i, j = int(p[0]), int(p[1])
             if (i, j) in adj:
                 continue
-            lab_diff = float(np.linalg.norm(sp_lab[i] - sp_lab[j]))
+            lab_diff = _value_weighted_lab_dist(sp_lab[i], sp_lab[j])
             cy_i, cx_i = sp_centroids[i]
             cy_j, cx_j = sp_centroids[j]
             sp_dist = float(np.sqrt((cy_i - cy_j) ** 2 + (cx_i - cx_j) ** 2)) / diag_dist
@@ -217,6 +231,13 @@ def _build_merge_tree_hierarchy(
     node_lab = {i: sp_lab[i].copy() for i in range(n_actual)}
     node_area = {i: int(sp_area[i]) for i in range(n_actual)}
     node_centroid = {i: list(sp_centroids[i]) for i in range(n_actual)}
+    # Track each node's L* range. Average linkage alone lets a region climb a
+    # value gradient step by tiny step (grass → shadowed grass → dark rock),
+    # so shadow masses vanished into midtone mush at the coarse cuts. A span
+    # penalty makes value-incoherent unions expensive: a painting mass should
+    # live inside roughly one value zone family.
+    node_lmin = {i: float(sp_lab[i][0]) for i in range(n_actual)}
+    node_lmax = {i: float(sp_lab[i][0]) for i in range(n_actual)}
 
     n_remaining = n_actual
     processed: set[tuple[int, int]] = set()
@@ -247,6 +268,8 @@ def _build_merge_tree_hierarchy(
         node_lab[new_id] = lab_merged
         node_area[new_id] = total
         node_centroid[new_id] = [cy_merged, cx_merged]
+        node_lmin[new_id] = min(node_lmin.get(ra, lab_merged[0]), node_lmin.get(rb, lab_merged[0]))
+        node_lmax[new_id] = max(node_lmax.get(ra, lab_merged[0]), node_lmax.get(rb, lab_merged[0]))
 
         uf.union(ra, rb, new_id)
         merges.append((ra, rb, cost, new_id))
@@ -263,12 +286,19 @@ def _build_merge_tree_hierarchy(
             # Recompute cost using merged LAB and area-based size factor
             nb_lab  = node_lab.get(nb_root, lab_merged)
             nb_area = node_area.get(nb_root, 1)
-            lab_diff = float(np.linalg.norm(lab_merged - nb_lab))
+            lab_diff = _value_weighted_lab_dist(lab_merged, nb_lab)
             # Area penalty: small regions merge more easily
             size_factor = 1.0 + 0.3 * float(np.log1p(
                 min(total, nb_area) / max(total, nb_area, 1)
             ))
-            new_cost = lab_diff / size_factor
+            # Value-span penalty: unions whose combined L* range exceeds
+            # ~one value-zone family (22 L* units) get progressively more
+            # expensive, so they happen last — at the cut levels ABOVE the
+            # coarse teaching masses, not inside them.
+            span = (max(node_lmax[new_id], node_lmax.get(nb_root, nb_lab[0]))
+                    - min(node_lmin[new_id], node_lmin.get(nb_root, nb_lab[0])))
+            span_penalty = 1.0 + max(0.0, span - 22.0) / 22.0
+            new_cost = lab_diff * span_penalty / size_factor
             new_adj[nb_root] = min(new_adj.get(nb_root, float("inf")), new_cost)
 
         for nb, new_cost in new_adj.items():

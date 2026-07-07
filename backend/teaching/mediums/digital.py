@@ -1,0 +1,56 @@
+DIGITAL: dict = {
+    "name": "Digital Painting",
+    "recommended_value_zones": 5,
+    "recommended_palette_size": 16,
+    "edge_strategy": "hard_soft_mix",
+    "texture_strategy": "brush_texture",
+    "stages": [
+        {
+            "order": 1,
+            "name": "Canvas & value thumbnail",
+            "description": "Set up the canvas at final aspect ratio. On one layer, paint a small 3-value thumbnail (dark / mid / light) with a hard round brush at low zoom. No line work yet.",
+            "why": "Digital's infinite undo tempts you to skip planning, but a painting that was never designed cannot be fixed by editing. A 3-value thumbnail settles the composition in minutes, while it is still cheap to change everything.",
+            "analysis_layers": ["level_1_values"],
+        },
+        {
+            "order": 2,
+            "name": "Big shape block-in",
+            "description": "On a new layer, block the major masses with a hard round or lasso-fill at 100% opacity. Stay zoomed out. Use only the values from your thumbnail.",
+            "why": "Working zoomed out at full opacity forces commitment — soft brushes at low opacity produce fog, not form. The lasso-fill trick keeps shapes crisp and stops you rendering before the design is proven.",
+            "analysis_layers": ["level_1_outlines", "level_2_values"],
+        },
+        {
+            "order": 3,
+            "name": "Local colour pass",
+            "description": "Gamut-pick your palette from the extracted swatches. Fill each mass with its local colour on a colour layer (or repaint over the value block-in). Keep values locked to the thumbnail.",
+            "why": "Picking colour straight from the reference teaches you nothing and often imports the camera's lies; mixing toward a deliberate, limited gamut is what builds colour judgement. Locking values while colouring protects the structure you already earned.",
+            "analysis_layers": ["level_2_colours", "color_by_number"],
+        },
+        {
+            "order": 4,
+            "name": "Temperature & light",
+            "description": "Shift lights warm and shadows cool (or the reverse, if the light source is cool). Use colour-adjust or glazing layers sparingly. One light source rules everything.",
+            "why": "Light temperature is the fastest way to make a digital painting stop looking 'digital' — uniform hue across light and shadow is the tell. One consistent temperature logic sells the light more than any amount of rendering.",
+            "analysis_layers": ["color_temperature", "level_3_colours"],
+        },
+        {
+            "order": 5,
+            "name": "Edges & focal rendering",
+            "description": "Merge working layers. Sharpen edges at the focal point; soften or lose edges everywhere else with a soft brush or smudge at low strength. Render form only where the eye should land.",
+            "why": "Digital tools make every edge razor-sharp by default, which spreads the viewer's attention evenly — the opposite of a painting. Deciding where NOT to render is the actual skill; the focal point only works because the rest stays quiet.",
+            "analysis_layers": ["outlines_primary_secondary", "level_4_outlines"],
+        },
+        {
+            "order": 6,
+            "name": "Texture, effects & final pass",
+            "description": "Add surface texture with textured brushes, subtle noise, or an overlay texture at low opacity. Final colour-balance pass. Flip the canvas one last time to check for drift.",
+            "why": "Uniform digital smoothness reads as plastic; a little texture gives the eye a surface to believe. Flipping the canvas resets your adaptation — errors your eye has learned to ignore become obvious in the mirror image.",
+            "analysis_layers": ["level_5_outlines", "level_5_colours"],
+        },
+    ],
+    "instructions": {
+        "palette_note": "Build a gamut mask from the extracted palette. Sample your own canvas while working, not the reference.",
+        "edge_note": "Default digital edges are all hard. You must consciously soften — decide lost/found edges like an oil painter.",
+        "value_note": "Check values with a desaturation layer toggle, and flip the canvas horizontally often.",
+    },
+}

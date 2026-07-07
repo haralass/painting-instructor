@@ -149,6 +149,49 @@ def run_hierarchical_analysis(
         level_edge_maps=level_edge_maps,  # level-aware outline source (see above)
     )
 
+    # ── 5b. Paint-by-numbers from the SAME hierarchy the lesson teaches ──────
+    # Overwrites the classic standalone page (when that step produced one):
+    # one segmentation everywhere keeps the guides consistent with the
+    # lesson's masses, and the merge tree doesn't chain-merge soft horizons
+    # the way the old RAG cut_threshold did.
+    from .renderer import render_paint_by_numbers
+    pbn_path: str | None = None
+    try:
+        pbn_path = render_paint_by_numbers(
+            label_maps=label_maps,
+            regions=regions,
+            palette=palette,
+            out_path=out_dir / "color_by_number.png",
+        )
+    except Exception:
+        log.warning("render_paint_by_numbers failed", exc_info=True)
+
+    # ── 5c. Detail-study overlay — white contours drawn ON the reference ─────
+    from .renderer import render_study_overlay, render_smart_dot_to_dot
+    study_path: str | None = None
+    try:
+        study_path = render_study_overlay(
+            label_maps=label_maps,
+            reference_rgb=cache.rgb,
+            out_path=out_dir / "study_overlay.png",
+        )
+    except Exception:
+        log.warning("render_study_overlay failed", exc_info=True)
+
+    # ── 5d. Smart dot-to-dot from the edge hierarchy (replaces the classic
+    #      fixed-step dots, which numbered noise on textured photos) ─────────
+    dots_path: str | None = None
+    try:
+        dots_lm = label_maps.get("l3", label_maps.get("l2"))
+        if dots_lm is not None:
+            dots_result = render_smart_dot_to_dot(
+                label_map=dots_lm, W=cache.W, H=cache.H,
+                out_path=out_dir / "dot_to_dot.png",
+            )
+            dots_path = dots_result["path"] if dots_result else None
+    except Exception:
+        log.warning("render_smart_dot_to_dot failed", exc_info=True)
+
     # ── 6. Write regions JSON ─────────────────────────────────────────────────
     regions_path = out_dir / "regions.json"
     regions_path.write_text(json.dumps(
@@ -210,4 +253,7 @@ def run_hierarchical_analysis(
         "label_to_region_id":  label_to_region_id,
         "edge_maps":           _edge_map_paths,  # A4: individual maps for frontend sublayer toggles
         "outline_composites":  _outline_composite_paths,  # global composites for lesson_plan resolution
+        "paint_by_numbers":    pbn_path,   # hierarchy-based page (replaces classic when both exist)
+        "study_overlay":       study_path, # white region contours ON the reference (detail study)
+        "smart_dot_to_dot":    dots_path,  # edge-hierarchy dots (replaces classic when both exist)
     }

@@ -128,6 +128,7 @@ def extract_edge_hierarchy(
 
     _t0 = time.perf_counter()
     _time_budget_exceeded = False
+    _candidates: list[dict] = []
 
     for eid, cnt in enumerate(contours):
         # A13: time budget — check every 200 contours to avoid per-iteration overhead
@@ -222,39 +223,60 @@ def extract_edge_hierarchy(
             (1 - local_texture) * 0.05
         ) * importance_bg
 
-        # Classification thresholds
-        if composite > 0.55 or (arc_norm > 0.10 and mean_grad > 0.45):
+        # Classification is deferred: absolute thresholds starved real photos
+        # of primary edges entirely (composite rarely exceeds 0.55 outside
+        # synthetic images — the block-in outline pages rendered blank).
+        # Collect candidates now; rank-based classification happens below.
+        _candidates.append({
+            "eid": eid, "pts": pts, "arc": arc, "arc_norm": arc_norm,
+            "mean_grad": mean_grad, "colour_diff": colour_diff,
+            "local_texture": local_texture, "in_bg": in_bg,
+            "ra": ra, "rb": rb, "composite": composite,
+        })
+
+    # ── Rank-based classification ─────────────────────────────────────────────
+    # Primary = the strongest ~6% of candidate edges (capped — a teaching
+    # outline must be sparse), and a primary edge must also be long enough to
+    # be structural: a 25-px glint can out-score a ridge line on gradient
+    # alone. Secondary = the next ~22%. The rest split into texture/decorative
+    # by the same local rules as before. Rank thresholds guarantee the
+    # primary/secondary outline layers are never empty on real photos.
+    _candidates.sort(key=lambda c: c["composite"], reverse=True)
+    n_cand      = len(_candidates)
+    n_primary   = max(6,  min(int(n_cand * 0.06), 48))
+    n_secondary = max(20, min(int(n_cand * 0.22), 300))
+    min_primary_arc = max(60.0, 0.02 * max_arc)
+
+    for rank, c in enumerate(_candidates):
+        if rank < n_primary and c["arc"] >= min_primary_arc:
             etype = "primary"
-        elif composite > 0.30 or colour_diff > 0.35:
+        elif rank < n_primary + n_secondary:
             etype = "secondary"
-        elif local_texture > 0.18 or arc < 20:
+        elif c["local_texture"] > 0.18 or c["arc"] < 20:
             etype = "texture"
         else:
             etype = "decorative"
-
-        importance = composite  # store composite as importance (diagnostic)
 
         # Exclusion policy: skip entirely — do NOT reclassify texture→decorative.
         # maps["texture"] will naturally remain all-zeros if no texture edges are drawn.
         if etype == "texture" and not include_texture:
             continue   # do not append, do not draw
 
-        if in_bg and not include_background:
+        if c["in_bg"] and not include_background:
             continue   # skip background edge entirely
 
         edges.append(Edge(
-            id=eid,
-            region_a=ra,
-            region_b=rb,
+            id=c["eid"],
+            region_a=c["ra"],
+            region_b=c["rb"],
             type=etype,
-            strength=mean_grad,
-            hardness=float(np.clip(mean_grad * 1.5, 0, 1)),
-            importance=importance,
-            path=pts.tolist(),
+            strength=c["mean_grad"],
+            hardness=float(np.clip(c["mean_grad"] * 1.5, 0, 1)),
+            importance=c["composite"],
+            path=c["pts"].tolist(),
         ))
 
-        # Render to appropriate map
-        draw_pts = pts.reshape(-1, 1, 2).astype(np.int32)
+        draw_pts = c["pts"].reshape(-1, 1, 2).astype(np.int32)
         if etype == "primary":
             cv2.polylines(maps_primary, [draw_pts], False, 255, 1)
         elif etype == "secondary":

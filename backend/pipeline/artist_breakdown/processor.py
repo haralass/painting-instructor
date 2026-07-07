@@ -20,8 +20,15 @@ def notan(img: Image.Image, zones: int = 3) -> Image.Image:
     Thresholds are adaptive: derived from the image histogram so that
     each zone contains roughly equal visual area.
     """
+    from ...analysis.values import smooth_lightness, simplify_zone_map
+
     arr = np.array(img.convert("RGB"), dtype=np.float32) / 255.0
     L   = skcolor.rgb2lab(arr)[:, :, 0]   # L* in [0, 100]
+
+    # A notan is a design of large flat masses. Smooth texture away before
+    # thresholding and simplify the result, or textured photos come out as
+    # salt-and-pepper posterisation instead of a value study.
+    L = smooth_lightness(L)
 
     # Adaptive thresholds: equal-quantile splits on the L histogram
     flat = L.ravel()
@@ -31,15 +38,22 @@ def notan(img: Image.Image, zones: int = 3) -> Image.Image:
     cuts[0]  = 0.0
     cuts[-1] = 100.0
 
-    # Perceptual grey tones from shadow to highlight
-    gray_values = [int(round(15 + 225 * i / (zones - 1))) for i in range(zones)]
-
     H, W = L.shape
-    out  = np.zeros((H, W, 3), dtype=np.uint8)
-    for i, gv in enumerate(gray_values):
+    zone_map = np.zeros((H, W), dtype=np.uint8)
+    for i in range(zones):
         lo, hi = cuts[i], cuts[i + 1]
         mask = (L >= lo) & (L < hi) if i < zones - 1 else (L >= lo)
-        out[mask] = (gv, gv, gv)
+        zone_map[mask] = i
+
+    # Larger min-mass than the analysis zone map: the notan is the boldest
+    # simplification in the whole lesson (2-3 values, postcard logic).
+    zone_map = simplify_zone_map(zone_map, zones, min_frac=0.006)
+
+    # Perceptual grey tones from shadow to highlight
+    gray_values = [int(round(15 + 225 * i / (zones - 1))) for i in range(zones)]
+    out = np.zeros((H, W, 3), dtype=np.uint8)
+    for i, gv in enumerate(gray_values):
+        out[zone_map == i] = (gv, gv, gv)
 
     return Image.fromarray(out)
 
@@ -100,10 +114,16 @@ def color_temperature(img: Image.Image) -> Image.Image:
 
     # Low chroma → neutral regardless of hue angle
     neutral_threshold = 8.0   # LAB chroma units
-    warm_threshold    = 4.0   # b* units above zero
+
+    # Warm/cool by LAB hue angle, not raw b*. b*>0 alone calls every green
+    # "warm" (green sits at a*<0, b*>0) and painted whole landscapes orange.
+    # Painters' warm arc ≈ red→orange→yellow: hue in (-60°, 105°]; greens,
+    # cyans and blues are cool.
+    hue = np.degrees(np.arctan2(b_ch, a_ch))   # 0°=red, 90°=yellow, ~135°=green, -90°=blue
+    warm_hue = (hue > -60.0) & (hue <= 105.0)
 
     neut_m = chroma < neutral_threshold
-    warm_m = ~neut_m & (b_ch > warm_threshold)
+    warm_m = ~neut_m & warm_hue
     cool_m = ~neut_m & ~warm_m
 
     overlay[warm_m] = warm_c
@@ -138,6 +158,11 @@ def color_temperature(img: Image.Image) -> Image.Image:
 
 
 def light_direction(img: Image.Image) -> Image.Image:
+    """Backwards-compatible wrapper — image only."""
+    return light_direction_with_angle(img)[0]
+
+
+def light_direction_with_angle(img: Image.Image) -> tuple[Image.Image, float | None]:
     """
     Light source direction via Sobel gradient orientation histogram.
     Overlay: 5 Gurney modeling zones color-coded on greyscale.
@@ -147,6 +172,11 @@ def light_direction(img: Image.Image) -> Image.Image:
       - Reflected light (medium grey)
       - Cast shadow (near black)
     + Arrow indicating dominant light direction.
+
+    Returns (overlay_image, dominant_angle_deg). The angle
+    (0=right, 90=top, 180=left, 270=bottom) is teaching data — the lesson
+    planner uses it to tell the student where the light actually comes from,
+    instead of the number living and dying inside this rendered arrow.
     """
     arr  = np.array(img.convert("RGB"), dtype=np.float32) / 255.0
     gray = (skcolor.rgb2gray(arr) * 255).astype(np.uint8)
@@ -160,6 +190,19 @@ def light_direction(img: Image.Image) -> Image.Image:
     # dominant light direction (weighted by gradient magnitude)
     hist, edges = np.histogram(ang, bins=36, range=(0, 360), weights=mag)
     dom_angle   = float(edges[hist.argmax()] + 5)   # bin center
+
+    # Confidence: length of the magnitude-weighted resultant vector. Diffuse
+    # or multi-source light produces orientations that cancel out (R → 0);
+    # claiming a direction then would be teaching a lie — better to say
+    # "diffuse" than point an arrow at noise.
+    rad_all = np.radians(ang)
+    sum_mag = float(mag.sum()) + 1e-6
+    resultant = float(np.hypot(
+        float((mag * np.cos(rad_all)).sum()),
+        float((mag * np.sin(rad_all)).sum()),
+    )) / sum_mag
+    confident = resultant >= 0.12
+    reported_angle: float | None = dom_angle if confident else None
 
     # 5-zone posterization on L-channel
     L    = skcolor.rgb2lab(arr)[:, :, 0]
@@ -186,21 +229,24 @@ def light_direction(img: Image.Image) -> Image.Image:
     fn  = _font(10)
     W, H = out.size
 
-    # draw light direction arrow
-    cx, cy = W // 2, H // 2
-    r  = min(W, H) // 8
-    rad = np.radians(dom_angle)
-    ex, ey = int(cx + r * np.cos(rad)), int(cy - r * np.sin(rad))
-    dr.line([(cx, cy), (ex, ey)], fill=(255, 200, 0), width=3)
-    dr.ellipse([ex-5, ey-5, ex+5, ey+5], fill=(255, 200, 0))
-    dr.text((4, 4), f"Light: {dom_angle:.0f}°", fill=(255, 200, 0), font=fn)
+    # draw light direction arrow — only when the direction is trustworthy
+    if confident:
+        cx, cy = W // 2, H // 2
+        r  = min(W, H) // 8
+        rad = np.radians(dom_angle)
+        ex, ey = int(cx + r * np.cos(rad)), int(cy - r * np.sin(rad))
+        dr.line([(cx, cy), (ex, ey)], fill=(255, 200, 0), width=3)
+        dr.ellipse([ex-5, ey-5, ex+5, ey+5], fill=(255, 200, 0))
+        dr.text((4, 4), f"Light: {dom_angle:.0f}°", fill=(255, 200, 0), font=fn)
+    else:
+        dr.text((4, 4), "Light: diffuse (no single direction)", fill=(255, 200, 0), font=fn)
 
     labels = ["Highlight", "Halftone", "Core Shadow", "Reflected Light", "Cast Shadow"]
     for i, (label, color) in enumerate(zip(labels, zone_colors)):
         tc = (20, 20, 20) if max(color) > 140 else (220, 220, 220)
         dr.text((4, 20 + i * 18), label, fill=tc, font=fn)
 
-    return out
+    return out, reported_angle
 
 
 def tonal_map(img: Image.Image) -> Image.Image:

@@ -18,6 +18,7 @@ def build_lesson_plan(
     outline_composites: dict,
     value_zones_map: str | None,
     classic_pages: list[str],
+    skill_level: str = "intermediate",
 ) -> list[dict]:
     """
     Resolve each medium teaching stage's `analysis_layers` keys against the
@@ -84,9 +85,59 @@ def build_lesson_plan(
             "order":       stage["order"],
             "name":        stage["name"],
             "description": stage["description"],
+            "why":         stage.get("why", ""),
             "medium":      medium,
             "level":       level,
             "assets":      assets,
         })
+
+    return _adapt_for_skill(steps, skill_level, medium, classic_by_stem, value_zones_map)
+
+
+def _adapt_for_skill(
+    steps: list[dict],
+    skill_level: str,
+    medium: str,
+    classic_by_stem: dict[str, str],
+    value_zones_map: str | None,
+) -> list[dict]:
+    """
+    Adjust the lesson for the student, without renumbering the medium's own
+    stage orders — the video chapter/overlay mapping is keyed on those orders,
+    so inserted steps use order 0 (before) and 99 (after) instead.
+    """
+    if skill_level == "beginner":
+        warmup_assets: dict[str, str] = {}
+        if "notan" in classic_by_stem:
+            warmup_assets["notan"] = classic_by_stem["notan"]
+        if value_zones_map:
+            warmup_assets["values"] = value_zones_map
+        steps = [{
+            "order":       0,
+            "name":        "Warm-up: paint the value study first",
+            "description": "Before the real painting, copy the notan study at postcard size using only 3 values. "
+                           "Spend no more than 15 minutes. This is a rehearsal, not a painting — throw it away afterwards.",
+            "why":         "Every mistake you make in the rehearsal is one you won't make on the real surface. "
+                           "Beginners who skip the value study spend the whole painting fighting problems that "
+                           "were free to fix at postcard size.",
+            "medium":      medium,
+            "level":       1,
+            "assets":      warmup_assets,
+        }] + steps
+
+    elif skill_level == "advanced":
+        steps = steps + [{
+            "order":       99,
+            "name":        "Self-critique pass",
+            "description": "Step back for ten minutes, then photograph your painting and upload it for critique. "
+                           "Compare the value structure, temperature and edges against the reference before "
+                           "deciding the painting is finished.",
+            "why":         "At your level the gap is rarely technique — it is the ability to see your own work "
+                           "objectively. A measured comparison against the reference catches the adaptation "
+                           "errors your eye has already learned to ignore.",
+            "medium":      medium,
+            "level":       5,
+            "assets":      {},
+        }]
 
     return steps

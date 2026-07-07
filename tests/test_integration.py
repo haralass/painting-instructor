@@ -29,7 +29,7 @@ from PIL import Image
 from fastapi.testclient import TestClient
 
 from backend.api.main import app, OUTPUTS_DIR
-from backend.workers.tasks import celery_app
+from backend.workers.tasks import celery_app, run_pipeline
 
 
 def _fake_line_art(img):
@@ -61,10 +61,20 @@ def eager_celery():
     # backend — under eager mode that lookup returns nothing unless the eager
     # result is also persisted to the backend.
     celery_app.conf.task_store_eager_result = True
+    # Celery copies task_store_eager_result onto the Task class the FIRST time
+    # the run_pipeline PromiseProxy is evaluated (Task.bind → from_config). If
+    # any earlier test touched run_pipeline (even a bare getattr on
+    # .apply_async, as test_api's mock.patch does), the class attribute is
+    # already frozen to False and the conf change above never reaches the
+    # tracer — eager results are silently not stored and every status poll
+    # reads the last PROGRESS meta forever. Override the bound attribute too.
+    prev_task_store = run_pipeline.store_eager_result
+    run_pipeline.store_eager_result = True
     yield
     celery_app.conf.task_always_eager = prev_eager
     celery_app.conf.task_eager_propagates = prev_propagates
     celery_app.conf.task_store_eager_result = prev_store_eager
+    run_pipeline.store_eager_result = prev_task_store
 
 
 def _upload_and_wait(client: TestClient, medium: str = "oil") -> tuple[str, dict]:

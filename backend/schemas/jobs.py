@@ -28,14 +28,21 @@ class CreateJobResponse(BaseModel):
     job_id: str
 
 
-VALID_MEDIUMS = {"oil", "watercolor", "acrylic", "pencil", "charcoal"}
+VALID_MEDIUMS = {"oil", "watercolor", "acrylic", "pencil", "charcoal", "digital"}
 VALID_VALUE_ZONES = {3, 5, 7}
+VALID_SKILL_LEVELS = {"beginner", "intermediate", "advanced"}
 
 
 def validate_medium(medium: str) -> str:
     if medium not in VALID_MEDIUMS:
         raise ValueError(f"medium must be one of {sorted(VALID_MEDIUMS)}, got {medium!r}")
     return medium
+
+
+def validate_skill_level(skill_level: str) -> str:
+    if skill_level not in VALID_SKILL_LEVELS:
+        raise ValueError(f"skill_level must be one of {sorted(VALID_SKILL_LEVELS)}, got {skill_level!r}")
+    return skill_level
 
 
 def validate_palette_size(v: int) -> int:

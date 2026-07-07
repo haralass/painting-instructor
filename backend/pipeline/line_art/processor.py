@@ -55,6 +55,40 @@ def _xdog(img_gray: np.ndarray, sigma: float = 0.4,
     return (result * 255).astype(np.uint8)
 
 
+def _dog_line_strength(g: np.ndarray, s1: float, s2: float, gain: float) -> np.ndarray:
+    """Band-pass magnitude as line strength — |DoG| picks up both sides of an
+    edge, which reads as a soft graphite stroke rather than a hard ink line."""
+    d = cv2.GaussianBlur(g, (0, 0), s1) - cv2.GaussianBlur(g, (0, 0), s2)
+    return np.clip(np.abs(d) * gain, 0.0, 1.0)
+
+
+def _classical_line_art(img_rgb: np.ndarray) -> Image.Image:
+    """
+    No-ML line art. Coherent Line Drawing (Kang et al. 2007 — Edge Tangent
+    Flow + flow-based DoG, see fdog.py) produces confident, connected ink
+    lines rather than the soft graphite of a plain |DoG| sketch, because
+    the filter runs perpendicular to a smoothed flow field and the response
+    is integrated ALONG it. The |DoG| pencil version below remains as a
+    second-tier fallback should FDoG ever fail.
+    """
+    gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
+    try:
+        from .fdog import coherent_line_drawing
+        return Image.fromarray(coherent_line_drawing(gray)).convert("RGB")
+    except Exception:
+        pass
+
+    gs = cv2.bilateralFilter(gray, 9, 40, 9).astype(np.float32) / 255.0
+
+    fine   = _dog_line_strength(gs, 0.8, 1.6, 14.0)
+    coarse = _dog_line_strength(gs, 2.0, 4.0, 18.0)
+    sketch = 1.0 - np.clip(fine * 0.7 + coarse * 1.0, 0.0, 1.0)
+
+    out = (sketch * 255).astype(np.uint8)
+    out = cv2.medianBlur(out, 3)   # drop salt specks without eating strokes
+    return Image.fromarray(out).convert("RGB")
+
+
 def _process_internal(img: Image.Image, resolution: int = 1024) -> tuple[Image.Image, np.ndarray | None]:
     """
     Professional-grade composite line art for artists.
@@ -75,11 +109,6 @@ def _process_internal(img: Image.Image, resolution: int = 1024) -> tuple[Image.I
     W, H    = img.size
     img_rgb = np.array(img.convert("RGB"))
 
-    # ── Layer 2: interior detail ──────────────────────────────────────────
-    det     = _get_detector()
-    raw_la  = det(img, detect_resolution=resolution, image_resolution=resolution, coarse=False)
-    interior = np.array(raw_la.convert("L"))   # white lines on black
-
     # ── Subject mask ──────────────────────────────────────────────────────
     global _rembg_sess
     fg_mask = None
@@ -92,6 +121,15 @@ def _process_internal(img: Image.Image, resolution: int = 1024) -> tuple[Image.I
         fg_mask = (alpha > 128).astype(np.uint8)
     except Exception:
         fg_mask = np.ones((H, W), dtype=np.uint8)
+
+    # ── Layer 2: interior detail ──────────────────────────────────────────
+    try:
+        det     = _get_detector()
+        raw_la  = det(img, detect_resolution=resolution, image_resolution=resolution, coarse=False)
+        interior = np.array(raw_la.convert("L"))   # white lines on black
+    except Exception:
+        # ML detector unavailable — classical XDoG sketch instead of failing.
+        return _classical_line_art(img_rgb), fg_mask
 
     # ── Layer 1: silhouette ───────────────────────────────────────────────
     sil = np.zeros((H, W), dtype=np.uint8)

@@ -56,6 +56,7 @@ def run_pipeline(
     background_detail: bool = False,
     region_complexity: int = 3,   # A6: 1–5 hierarchy resolution
     skill_level: str = "intermediate",
+    user_id: str | None = None,
     # backward-compat alias
     n_colors: int = 0,
 ) -> dict:
@@ -90,6 +91,8 @@ def run_pipeline(
     from ..analysis.subject import subject_mask as compute_subject_mask
     from ..analysis.depth import depth_planes as compute_depth_planes
     from ..analysis.albedo_shading import local_vs_light_page
+    from ..analysis.traps import value_traps
+    from ..analysis.edge_coach import edge_plan
     from ..pipeline.video.processor import generate as make_video
     from ..pipeline.stroke_paint.processor import render_stroke_frames
     from ..teaching.mediums import get_medium
@@ -267,6 +270,19 @@ def run_pipeline(
     if lvl_page:
         pages.append(save("local_vs_light", lvl_page))
 
+    # ── Value Traps study (simultaneous-contrast warnings, before you paint) ──
+    traps_out = run("value_traps", lambda: value_traps(img))
+    trap_notes: list[str] = []
+    if traps_out:
+        traps_img, trap_notes = traps_out
+        pages.append(save("value_traps", traps_img))
+
+    # ── Edge-Control study (lost/found/soft/hard vs the focal subject) ────────
+    edge_out = run("edge_coach", lambda: edge_plan(img, subject_mask=subj_mask))
+    if edge_out:
+        edge_img, _edge_notes = edge_out
+        pages.append(save("edge_coach", edge_img))
+
     notan_result = parallel_results.get("notan")
     if notan_result:
         pages.append(save("notan", notan_result))
@@ -382,6 +398,18 @@ def run_pipeline(
     # could silently diverge. Build the absolute-path plan here once, then
     # derive the outputs-relative form the manifest needs from it, so the two
     # path forms are guaranteed identical apart from the paths themselves.
+    # ── Adaptive Painter Profile — a returning student's recurring habits
+    #    reshape this lesson (emphasis, watch-outs, goal). Deterministic, no
+    #    LLM. Absent/failed => None => lesson is identical to a first-timer's. ──
+    profile: dict | None = None
+    if user_id:
+        try:
+            from ..critique.profile import load_profile
+            profile = load_profile(user_id)
+        except Exception:
+            log.warning("could not load adaptive profile for user %r", user_id, exc_info=True)
+            profile = None
+
     medium_cfg = get_medium(medium)
     classic_pages = [p for p in pages if not _is_hierarchical_asset(p) and p]
     lesson_plan_abs = build_lesson_plan(
@@ -392,6 +420,7 @@ def run_pipeline(
         value_zones_map=hier.get("value_zones_path"),
         classic_pages=classic_pages,
         skill_level=skill_level,
+        profile=profile,
     )
     if image_brief:
         lesson_plan_abs = attach_image_notes(lesson_plan_abs, image_brief, medium)

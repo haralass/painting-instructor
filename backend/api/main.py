@@ -76,6 +76,7 @@ async def create_job(
     background_detail:  bool = Form(False),
     region_complexity:  int  = Form(3),   # A6: 1–5 hierarchy resolution
     skill_level:        str  = Form("intermediate"),
+    user_id:            str | None = Form(None),
 ):
     """Upload a reference photo and start the painting instructor pipeline."""
     if file.content_type not in ALLOWED_TYPES:
@@ -112,6 +113,7 @@ async def create_job(
             "background_detail":   background_detail,
             "region_complexity":   region_complexity,
             "skill_level":         skill_level,
+            "user_id":             user_id,
         },
         task_id=job_id,
     )

@@ -23,6 +23,7 @@ from ..schemas.jobs import (
     validate_skill_level,
 )
 from ..teaching.mediums import MEDIUMS, get_medium as _get_medium_cfg
+from ..teaching.mixing import list_brands
 
 app = FastAPI(title="Painting Instructor API", version="0.3.0")
 
@@ -77,6 +78,7 @@ async def create_job(
     region_complexity:  int  = Form(3),   # A6: 1–5 hierarchy resolution
     skill_level:        str  = Form("intermediate"),
     user_id:            str | None = Form(None),
+    brand_id:           str | None = Form(None),
 ):
     """Upload a reference photo and start the painting instructor pipeline."""
     if file.content_type not in ALLOWED_TYPES:
@@ -114,6 +116,7 @@ async def create_job(
             "region_complexity":   region_complexity,
             "skill_level":         skill_level,
             "user_id":             user_id,
+            "brand_id":            brand_id,
         },
         task_id=job_id,
     )
@@ -261,6 +264,16 @@ def download_pdf(job_id: str):
     if not pdf_path.exists():
         raise HTTPException(404, "PDF not ready yet")
     return FileResponse(pdf_path, media_type="application/pdf", filename="tutorial_book.pdf")
+
+
+@app.get("/brands")
+def list_paint_brands(medium: str | None = None):
+    """Real-paint tube sets for brand-specific mixing recipes.
+
+    Optional ``?medium=`` filters to one medium (oil/acrylic/watercolor).
+    Each entry: {"id", "name", "medium", "tube_count"}.
+    """
+    return list_brands(medium)
 
 
 @app.get("/mediums/")

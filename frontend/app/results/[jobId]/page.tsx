@@ -8,6 +8,7 @@ import LoadingScreen from "./components/LoadingScreen";
 import ImageDisplay from "./components/ImageDisplay";
 import LessonPlayer from "./components/LessonPlayer";
 import CritiquePanel from "./components/CritiquePanel";
+import SquintSimulator from "./components/SquintSimulator";
 import HierarchicalControls from "./components/HierarchicalControls";
 import TeachingAside from "./components/TeachingAside";
 
@@ -69,6 +70,12 @@ export default function ResultsPage() {
     : absUrl(`/outputs/${jobId}/line_art.png`);
 
   const currentLevelData = manifest?.detail_levels?.[String(detailLevel)];
+
+  // Value-study asset for the Squint Simulator's "reveal the true notan" button.
+  // Prefer the dedicated notan classic page; fall back to the current level's
+  // values layer. Undefined when neither exists (button simply hides).
+  const notanUrl = classicPages.find(p => p.key === "notan")?.url
+    ?? (currentLevelData?.values ? outputUrl(currentLevelData.values) : undefined);
 
   // Whether video/PDF are still being generated (A3 progressive delivery)
   const isAnalysisReady = manifest?.status === "analysis_ready";
@@ -174,6 +181,7 @@ export default function ResultsPage() {
             {([
               ["lesson",              "Lesson",          Boolean(manifest?.lesson_plan?.length)],
               ["hierarchical_lesson", "Explore Layers",  true],
+              ["squint",              "Squint",          true],
               ["classic_analysis",    "Classic Analysis", true],
               ["critique",            "Get Critique",    true],
             ] as const).map(([mode, label, enabled]) => enabled && (
@@ -237,6 +245,7 @@ export default function ResultsPage() {
             {([
               ["lesson",              "Lesson"],
               ["hierarchical_lesson", "Layers"],
+              ["squint",              "Squint"],
               ["classic_analysis",    "Analysis"],
               ["critique",            "Critique"],
             ] as const).map(([mode, label]) => (
@@ -264,6 +273,8 @@ export default function ResultsPage() {
             />
           ) : viewMode === "critique" ? (
             <CritiquePanel jobId={jobId} referenceUrl={referenceUrl} />
+          ) : viewMode === "squint" ? (
+            <SquintSimulator referenceUrl={referenceUrl} notanUrl={notanUrl} />
           ) : (<>
 
           {/* About Your Image — grounded in this job's own analysis (Claude

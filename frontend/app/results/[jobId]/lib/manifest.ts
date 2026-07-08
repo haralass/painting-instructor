@@ -131,6 +131,8 @@ export const OUTLINE_SUBLAYER_LABELS: Record<string, string> = {
 export const CLASSIC_PAGE_KEYS = [
   "line_art", "notan", "color_temperature", "color_palette",
   "light_direction", "color_by_number", "dot_to_dot", "study_overlay",
+  "subject_focus", "depth_planes", "local_vs_light",
+  "value_traps", "edge_coach", "composition",
 ];
 
 export type CompareMode = "analysis" | "reference" | "side_by_side" | "overlay";

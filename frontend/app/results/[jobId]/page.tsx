@@ -9,8 +9,10 @@ import ImageDisplay from "./components/ImageDisplay";
 import LessonPlayer from "./components/LessonPlayer";
 import CritiquePanel from "./components/CritiquePanel";
 import SquintSimulator from "./components/SquintSimulator";
+import ProgressiveReveal from "./components/ProgressiveReveal";
 import HierarchicalControls from "./components/HierarchicalControls";
 import TeachingAside from "./components/TeachingAside";
+import type { ViewMode } from "./hooks/useJobPolling";
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function ResultsPage() {
@@ -21,6 +23,13 @@ export default function ResultsPage() {
     detailLevel, setDetailLevel,
     viewMode, setViewMode,
   } = useJobPolling(jobId);
+
+  // "build_up" is a UI-only view mode layered on top of the polling hook's
+  // ViewMode union (which is off-limits to edit). Widen the mode + setter once
+  // here at the boundary so the rest of the file can treat it as a real mode.
+  type UIViewMode = ViewMode | "build_up";
+  const uiViewMode = viewMode as UIViewMode;
+  const setUIViewMode = setViewMode as unknown as React.Dispatch<React.SetStateAction<UIViewMode>>;
 
   const [whyOpen, setWhyOpen] = useState(false);
 
@@ -181,6 +190,7 @@ export default function ResultsPage() {
             {([
               ["lesson",              "Lesson",          Boolean(manifest?.lesson_plan?.length)],
               ["hierarchical_lesson", "Explore Layers",  true],
+              ["build_up",            "Build up",        Boolean(manifest?.detail_levels && Object.keys(manifest.detail_levels).length > 0)],
               ["squint",              "Squint",          true],
               ["classic_analysis",    "Classic Analysis", true],
               ["critique",            "Get Critique",    true],
@@ -188,13 +198,13 @@ export default function ResultsPage() {
               <button
                 key={mode}
                 onClick={() => {
-                  setViewMode(mode);
+                  setUIViewMode(mode);
                   if (mode === "classic_analysis" && !selected && classicPages[0]) setSelected(classicPages[0]);
                 }}
                 className="w-full text-left px-2 py-1.5 rounded text-xs font-medium transition-colors"
                 style={{
-                  background: viewMode === mode ? "var(--accent)" : "var(--surface)",
-                  color:      viewMode === mode ? "var(--paper)" : "var(--text-dim)",
+                  background: uiViewMode === mode ? "var(--accent)" : "var(--surface)",
+                  color:      uiViewMode === mode ? "var(--paper)" : "var(--text-dim)",
                 }}>
                 {label}
               </button>
@@ -245,19 +255,20 @@ export default function ResultsPage() {
             {([
               ["lesson",              "Lesson"],
               ["hierarchical_lesson", "Layers"],
+              ["build_up",            "Build up"],
               ["squint",              "Squint"],
               ["classic_analysis",    "Analysis"],
               ["critique",            "Critique"],
             ] as const).map(([mode, label]) => (
               <button key={mode}
                       onClick={() => {
-                        setViewMode(mode);
+                        setUIViewMode(mode);
                         if (mode === "classic_analysis" && !selected && classicPages[0]) setSelected(classicPages[0]);
                       }}
                       className="flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors"
                       style={{
-                        background: viewMode === mode ? "var(--accent)" : "var(--surface)",
-                        color:      viewMode === mode ? "var(--paper)" : "var(--text-dim)",
+                        background: uiViewMode === mode ? "var(--accent)" : "var(--surface)",
+                        color:      uiViewMode === mode ? "var(--paper)" : "var(--text-dim)",
                         border:     "1px solid var(--border)",
                       }}>
                 {label}
@@ -265,7 +276,12 @@ export default function ResultsPage() {
             ))}
           </div>
 
-          {viewMode === "lesson" && manifest?.lesson_plan && manifest.lesson_plan.length > 0 ? (
+          {uiViewMode === "build_up" ? (
+            <ProgressiveReveal
+              manifest={manifest}
+              referenceUrl={referenceUrl}
+            />
+          ) : viewMode === "lesson" && manifest?.lesson_plan && manifest.lesson_plan.length > 0 ? (
             <LessonPlayer
               manifest={manifest}
               referenceUrl={referenceUrl}

@@ -6,6 +6,16 @@ import { STEP_STAGE, STEP_LABELS, type JobStatus } from "../lib/manifest";
 // A3: shown until analysis_ready manifest arrives (or completion).
 export default function LoadingScreen({ jobStatus }: { jobStatus: JobStatus }) {
   const isRunning = jobStatus.status === "queued" || jobStatus.status === "processing";
+
+  // Paint the canvas forward from the live progress percentage: 0→100% is
+  // spread across the six painting stages (blank→sketch→notan→block-in→
+  // colour→detail), so as analysis advances the picture visibly evolves.
+  // We never fall behind the current pipeline step, so even if the reported
+  // percentage lags, the canvas shows at least the paint that step implies.
+  const stepStage = STEP_STAGE[jobStatus.step] ?? 0;
+  const progressStage = Math.floor((jobStatus.progress / 100) * STAGE_VISUAL_COUNT);
+  const canvasStage = Math.min(Math.max(stepStage, progressStage), STAGE_VISUAL_COUNT - 1);
+
   return (
     <main className="min-h-screen flex flex-col items-center justify-center px-4"
           style={{ background: "var(--bg)" }}>
@@ -22,7 +32,7 @@ export default function LoadingScreen({ jobStatus }: { jobStatus: JobStatus }) {
                    transform: "rotate(-0.6deg)",
                  }}>
               <EvolvingCanvas
-                stage={Math.min(STEP_STAGE[jobStatus.step] ?? 0, STAGE_VISUAL_COUNT - 1)}
+                stage={canvasStage}
                 seed={7}
               />
             </div>

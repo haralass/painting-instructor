@@ -34,6 +34,8 @@ try:
 except Exception:  # colour-science missing → 3-band fallback
     _SPECTRAL = False
 
+from . import paint_brands as _paint_brands
+
 # A standard starter palette (oil/acrylic). sRGB approximations of masstone.
 TUBES: list[tuple[str, tuple[int, int, int]]] = [
     ("Titanium White",    (245, 245, 240)),
@@ -126,64 +128,126 @@ def _rgb_to_lab(rgb: np.ndarray) -> np.ndarray:
     return np.array([116.0 * f[1] - 16.0, 500.0 * (f[0] - f[1]), 200.0 * (f[1] - f[2])])
 
 
-@lru_cache(maxsize=1)
-def _candidate_mixtures() -> list[tuple[list, np.ndarray, np.ndarray]]:
-    """[(recipe, mixed_rgb, mixed_lab)] over singles, pairs and triples."""
+# Default palette as a hashable tuple so it can key the candidate cache.
+_DEFAULT_TUBES: tuple[tuple[str, tuple[int, int, int]], ...] = tuple(
+    (name, tuple(int(c) for c in rgb)) for name, rgb in TUBES
+)
+
+# Above this best-match ΔE we tell the UI the colour is out of the set's reach.
+_REACHABLE_DE = 14.0
+
+
+@lru_cache(maxsize=16)
+def _candidate_mixtures(
+    tubes: tuple[tuple[str, tuple[int, int, int]], ...] = _DEFAULT_TUBES,
+) -> list[tuple[list, np.ndarray, np.ndarray]]:
+    """[(recipe, mixed_rgb, mixed_lab)] over singles, pairs and triples.
+
+    Parametrised by a hashable tube tuple so any real brand set can be searched;
+    the no-argument call uses the default palette and is cached exactly as before.
+    """
     out = []
-    for i, (name, rgb) in enumerate(TUBES):
+    for name, rgb in tubes:
         mixed = np.asarray(rgb, dtype=np.float64)
         out.append(([{"tube": name, "parts": 1}], mixed, _rgb_to_lab(mixed)))
-    for (i, j) in combinations(range(len(TUBES)), 2):
+    for (i, j) in combinations(range(len(tubes)), 2):
         for pa, pb in _PAIR_RATIOS:
-            mixed = mix_km([TUBES[i][1], TUBES[j][1]], [pa, pb])
-            recipe = [{"tube": TUBES[i][0], "parts": pa}, {"tube": TUBES[j][0], "parts": pb}]
+            mixed = mix_km([tubes[i][1], tubes[j][1]], [pa, pb])
+            recipe = [{"tube": tubes[i][0], "parts": pa}, {"tube": tubes[j][0], "parts": pb}]
             out.append((recipe, mixed, _rgb_to_lab(mixed)))
-    for (i, j, k) in combinations(range(len(TUBES)), 3):
+    for (i, j, k) in combinations(range(len(tubes)), 3):
         for pa, pb, pc in _TRIPLE_RATIOS:
-            mixed = mix_km([TUBES[i][1], TUBES[j][1], TUBES[k][1]], [pa, pb, pc])
-            recipe = [{"tube": TUBES[i][0], "parts": pa},
-                      {"tube": TUBES[j][0], "parts": pb},
-                      {"tube": TUBES[k][0], "parts": pc}]
+            mixed = mix_km([tubes[i][1], tubes[j][1], tubes[k][1]], [pa, pb, pc])
+            recipe = [{"tube": tubes[i][0], "parts": pa},
+                      {"tube": tubes[j][0], "parts": pb},
+                      {"tube": tubes[k][0], "parts": pc}]
             out.append((recipe, mixed, _rgb_to_lab(mixed)))
     return out
 
 
-def recipe_for(rgb: tuple[int, int, int]) -> dict:
+def _tubes_for_brand(
+    brand_id: str | None,
+) -> tuple[tuple[str, tuple[int, int, int]], ...]:
+    """The candidate tube tuple for a brand, or the default palette when None."""
+    if brand_id is None:
+        return _DEFAULT_TUBES
+    return _paint_brands.tubes_tuple(brand_id)
+
+
+def list_brands(medium: str | None = None) -> list[dict]:
+    """Available real-paint tube sets, optionally filtered to one medium.
+
+    Returns [{"id", "name", "medium", "tube_count"}].
+    """
+    return [
+        {
+            "id": bid,
+            "name": brand["name"],
+            "medium": brand["medium"],
+            "tube_count": len(brand["tubes"]),
+        }
+        for bid, brand in _paint_brands.BRANDS.items()
+        if medium is None or brand["medium"] == medium
+    ]
+
+
+def recipe_for(rgb: tuple[int, int, int], brand_id: str | None = None) -> dict:
     """
     Best small-parts recipe for a target sRGB colour.
+
+    With ``brand_id`` the recipe is drawn only from that real brand's tubes
+    (see ``paint_brands``); without it, the generic default palette is used and
+    the result is identical to before. If even the closest mixture is far from
+    the target (ΔE > ~14), ``reachable`` is False and a note is attached so the
+    UI can warn "your set can't reach this colour".
+
     Returns {"recipe": [...], "mixed_rgb": [r,g,b], "delta_e": float,
-             "text": "Titanium White 2 : Burnt Sienna 1"}.
+             "text": "Titanium White 2 : Burnt Sienna 1", "reachable": bool[,
+             "note": str]}.
     """
+    tubes = _tubes_for_brand(brand_id)
     target_lab = _rgb_to_lab(np.asarray(rgb, dtype=np.float64))
     best = None
     best_de = float("inf")
-    for recipe, mixed, lab in _candidate_mixtures():
+    for recipe, mixed, lab in _candidate_mixtures(tubes):
         de = float(np.linalg.norm(lab - target_lab))
         # tie-break: prefer fewer tubes at effectively equal ΔE
         if de < best_de - 0.25 or (abs(de - best_de) <= 0.25 and best and len(recipe) < len(best[0])):
             best, best_de = (recipe, mixed), de
     recipe, mixed = best
-    return {
+    reachable = best_de <= _REACHABLE_DE
+    result = {
         "recipe": recipe,
         "mixed_rgb": [int(round(v)) for v in mixed],
         "delta_e": round(best_de, 1),
         "text": " : ".join(f"{r['tube']} {r['parts']}" for r in recipe),
+        "reachable": reachable,
     }
+    if not reachable:
+        result["note"] = (
+            f"Closest mix from this set is ΔE {result['delta_e']} away — this "
+            "colour is likely outside the set's reach; try a nearer hue or add a tube."
+        )
+    return result
 
 
 # Mediums where physical paint mixing applies
 MIXING_MEDIUMS = {"oil", "acrylic", "watercolor"}
 
 
-def recipes_for_palette(palette: list[dict], medium: str) -> list[dict]:
-    """Attach a mixing recipe to each palette entry (mutates copies)."""
+def recipes_for_palette(
+    palette: list[dict], medium: str, brand_id: str | None = None
+) -> list[dict]:
+    """Attach a mixing recipe to each palette entry (mutates copies).
+
+    When ``brand_id`` is given, recipes are built from that brand's tubes."""
     if medium not in MIXING_MEDIUMS:
         return palette
     enriched = []
     for p in palette:
         q = dict(p)
         try:
-            q["mixing"] = recipe_for(tuple(p.get("base_rgb", (128, 128, 128))))
+            q["mixing"] = recipe_for(tuple(p.get("base_rgb", (128, 128, 128))), brand_id=brand_id)
         except Exception:
             pass
         enriched.append(q)

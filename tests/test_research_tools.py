@@ -5,7 +5,10 @@ from PIL import Image, ImageDraw
 
 from backend.pipeline.line_art.fdog import coherent_line_drawing
 from backend.analysis.perspective import detect_vanishing_point
-from backend.teaching.mixing import mix_km, recipe_for, recipes_for_palette, TUBES
+from backend.teaching.mixing import (
+    mix_km, recipe_for, recipes_for_palette, list_brands, TUBES,
+)
+from backend.teaching import paint_brands
 
 
 class TestFDoG:
@@ -87,6 +90,58 @@ class TestKubelkaMunk:
         assert "mixing" in oil[0] and "text" in oil[0]["mixing"]
         pencil = recipes_for_palette(pal, "pencil")
         assert "mixing" not in pencil[0]
+
+
+class TestBrandRecipes:
+    # One real brand reused across the heavier tests so its candidate mixtures
+    # are built (and cached) only once.
+    BRAND = "winsor_newton_oil"
+
+    def test_list_brands_per_medium(self):
+        all_brands = list_brands()
+        assert len(all_brands) >= 6
+        ids = {b["id"] for b in all_brands}
+        assert self.BRAND in ids
+        for b in all_brands:
+            assert {"id", "name", "medium", "tube_count"} <= set(b)
+            assert b["tube_count"] >= 12
+        for medium in ("oil", "watercolor", "acrylic"):
+            sub = list_brands(medium)
+            assert len(sub) >= 2
+            assert all(b["medium"] == medium for b in sub)
+        # filtering actually narrows the set
+        assert len(list_brands("oil")) < len(all_brands)
+
+    def test_recipe_uses_only_that_brands_tubes(self):
+        brand_tube_names = {name for name, _ in paint_brands.BRANDS[self.BRAND]["tubes"]}
+        for target in [(150, 120, 90), (90, 110, 140), (200, 170, 140)]:
+            res = recipe_for(target, brand_id=self.BRAND)
+            assert res["reachable"] is True, f"{target}: {res}"
+            used = {r["tube"] for r in res["recipe"]}
+            assert used <= brand_tube_names, f"{used} not a subset of {self.BRAND}"
+
+    def test_colour_outside_set_flagged_unreachable(self):
+        # A fluorescent magenta no real tube masstone can reach.
+        res = recipe_for((255, 0, 255), brand_id=self.BRAND)
+        assert res["reachable"] is False
+        assert res["delta_e"] > 14
+        assert "note" in res and res["note"]
+
+    def test_no_brand_path_unchanged(self):
+        # Same recipe/text/ΔE as the historical default; new key is additive.
+        for name, rgb in TUBES[:4]:
+            res = recipe_for(rgb)
+            assert res["recipe"][0]["tube"] == name and len(res["recipe"]) == 1
+            assert res["delta_e"] < 2.0
+            assert res["reachable"] is True
+        earth = recipe_for((150, 120, 90))
+        earth_explicit = recipe_for((150, 120, 90), brand_id=None)
+        assert earth["text"] == earth_explicit["text"]
+        assert earth["delta_e"] == earth_explicit["delta_e"]
+
+    def test_unknown_brand_raises(self):
+        with pytest.raises(KeyError):
+            recipe_for((150, 120, 90), brand_id="no_such_brand")
 
 
 class TestCritiqueAlignment:

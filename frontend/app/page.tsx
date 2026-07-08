@@ -8,6 +8,7 @@ import AtelierHero from "./components/AtelierHero";
 import KineticTitle from "./components/KineticTitle";
 import ArtTile, { ArtMode } from "./components/ArtTile";
 import EvolvingCanvas, { STAGE_VISUAL_COUNT } from "./components/EvolvingCanvas";
+import { painterUserId } from "./lib/user";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -42,6 +43,12 @@ const ANALYSIS_TILES: { mode: ArtMode; title: string; desc: string; count: numbe
   { mode: "light",       title: "Light & Shadow",     desc: "Gurney's five zones, from highlight to cast shadow.", count: 22 },
   { mode: "numbers",     title: "Paint by Numbers",   desc: "Flat colour blocking — how every master starts a canvas.", count: 16 },
   { mode: "dots",        title: "Structural Dots",    desc: "Connect them in order to build your under-drawing.", count: 10 },
+  { mode: "subject",     title: "Focal Subject",      desc: "Your subject isolated — where the eye must land first.", count: 40 },
+  { mode: "depth",       title: "Depth Planes",       desc: "Foreground, middle, background — atmospheric perspective mapped.", count: 36 },
+  { mode: "locallight",  title: "Local Colour vs Light", desc: "Colour split from light — a shadow is the same colour under less light.", count: 30 },
+  { mode: "traps",       title: "Value Traps",        desc: "Where simultaneous contrast will fool your eye — flagged before you paint.", count: 30 },
+  { mode: "edges",       title: "Edge Control",       desc: "Hard, soft and lost edges mapped, so sharpness leads the eye.", count: 24 },
+  { mode: "focus",       title: "Composition & Focus", desc: "Focal competition and rule-of-thirds placement, measured.", count: 40 },
   { mode: "colour",      title: "Tutorial Video & PDF", desc: "A progressive video lesson and a printable tutorial book.", count: 60 },
 ];
 
@@ -258,6 +265,8 @@ export default function HomePage() {
       form.append("background_detail", String(bgDetail));
       form.append("skill_level",       skillLevel);
       if (brandId) form.append("brand_id", brandId);
+      const uid = painterUserId();
+      if (uid) form.append("user_id", uid);
 
       const res = await fetch(`${API}/jobs/`, { method: "POST", body: form });
       if (!res.ok) {
@@ -456,7 +465,7 @@ export default function HomePage() {
                 A complete <em className="text-gradient">atelier analysis</em>
               </h2>
               <p className="mt-5 max-w-lg mx-auto" style={{ color: "var(--text-dim)" }}>
-                Eight studies generated from your photo — the same preparation
+                Fourteen studies generated from your photo — the same preparation
                 a classical painter would make before touching the canvas.
               </p>
             </div>

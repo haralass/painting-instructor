@@ -59,6 +59,11 @@ export const PAGE_LABELS: Record<string, { title: string; why: string; tip: stri
     why:   "The eye locks onto the hardest edge in the picture. Warm marks are your hard/found edges, cool are soft/lost. They should cluster on the focal subject and dissolve in the shadows and background — equal sharpness everywhere means nothing leads the eye.",
     tip:   "Keep your crispest edges on the focal point; soften edges where similar values meet and everywhere you want the eye to pass over.",
   },
+  composition: {
+    title: "Composition & Focus",
+    why:   "The warm ring is where the eye is pulled hardest (contrast × detail × colour); a cool ring marks a rival that competes for attention. A strong picture has one focal point, ideally near a rule-of-thirds intersection (the grid).",
+    tip:   "If two centres compete, subdue one — lower its contrast, detail or saturation. Place your strongest note on the subject, near a third, not dead centre.",
+  },
   notan: {
     title: "Value Study (Notan)",
     why:   "Notan is a Japanese design concept — before you touch colour, you must get your lights and darks right. A painting with correct values reads in black and white.",

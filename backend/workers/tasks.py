@@ -93,6 +93,7 @@ def run_pipeline(
     from ..analysis.albedo_shading import local_vs_light_page
     from ..analysis.traps import value_traps
     from ..analysis.edge_coach import edge_plan
+    from ..analysis.composition import focal_competition
     from ..pipeline.video.processor import generate as make_video
     from ..pipeline.stroke_paint.processor import render_stroke_frames
     from ..teaching.mediums import get_medium
@@ -282,6 +283,12 @@ def run_pipeline(
     if edge_out:
         edge_img, _edge_notes = edge_out
         pages.append(save("edge_coach", edge_img))
+
+    # ── Composition study (focal competition / rule of thirds) ────────────────
+    comp_out = run("composition", lambda: focal_competition(img, subject_mask=subj_mask))
+    if comp_out:
+        comp_img, _comp_notes = comp_out
+        pages.append(save("composition", comp_img))
 
     notan_result = parallel_results.get("notan")
     if notan_result:

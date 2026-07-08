@@ -49,6 +49,16 @@ export const PAGE_LABELS: Record<string, { title: string; why: string; tip: stri
     why:   "Left is the local colour with the light divided out; right is the light alone. A shadow isn't a different colour — it's the same local colour under less light. Mix the local colour first, then adjust it for the light.",
     tip:   "Judge an object's true colour from the lit-and-shadowed average, then push it warmer/lighter in the light and cooler/darker in shadow — don't reach for a whole new colour.",
   },
+  value_traps: {
+    title: "Value Traps",
+    why:   "Simultaneous contrast fools the eye: a shape looks darker against a light surround and lighter against a dark one, so you paint the apparent value, not the true one. The tinted zones are where the trap is strongest — cool = you'll go too dark, warm = too light.",
+    tip:   "In these zones, don't trust the local comparison. Judge the value against the whole picture — hold your darkest dark and lightest light in mind and place it between them.",
+  },
+  edge_coach: {
+    title: "Edge Control",
+    why:   "The eye locks onto the hardest edge in the picture. Warm marks are your hard/found edges, cool are soft/lost. They should cluster on the focal subject and dissolve in the shadows and background — equal sharpness everywhere means nothing leads the eye.",
+    tip:   "Keep your crispest edges on the focal point; soften edges where similar values meet and everywhere you want the eye to pass over.",
+  },
   notan: {
     title: "Value Study (Notan)",
     why:   "Notan is a Japanese design concept — before you touch colour, you must get your lights and darks right. A painting with correct values reads in black and white.",

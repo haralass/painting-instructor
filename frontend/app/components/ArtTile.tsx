@@ -72,7 +72,11 @@ function makeBlobs(seed: number, n = 80): PaintBlob[] {
 
 export type ArtMode =
   | "colour" | "line" | "notan" | "temperature"
-  | "palette" | "numbers" | "dots" | "light";
+  | "palette" | "numbers" | "dots" | "light"
+  | "subject" | "depth" | "locallight" | "traps" | "edges" | "focus";
+
+// Greys for the de-emphasised halves of the new study modes
+const GREY = ["#a8a193", "#8a8272", "#6b6258", "#c4bcac"];
 
 export default function ArtTile({
   mode,
@@ -109,6 +113,80 @@ export default function ArtTile({
           <rect width={W} height={H} fill={`url(#lg-${seed})`} />
           {shown.map((b, i) => (
             <path key={i} d={b.path} fill="#1a222c" opacity={0.08 + (b.x / W) * 0.14} />
+          ))}
+        </>
+      ) : mode === "depth" ? (
+        <>
+          {/* Atmospheric perspective: pale cool distance, warm dark foreground */}
+          <defs>
+            <linearGradient id={`dp-${seed}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#dfe6ea" />
+              <stop offset="45%" stopColor="#9fb0bd" />
+              <stop offset="100%" stopColor="#f3edde" />
+            </linearGradient>
+          </defs>
+          <rect width={W} height={H} fill={`url(#dp-${seed})`} />
+          {shown.map((b, i) => {
+            const far = b.y < H * 0.38, mid = b.y < H * 0.68;
+            const pal = far ? ["#b9c6cf", "#a5b5c2"] : mid ? COOL : WARM;
+            return <path key={i} d={b.path} fill={pal[b.ci % pal.length]}
+                         opacity={far ? 0.45 : mid ? 0.7 : 0.95} />;
+          })}
+        </>
+      ) : mode === "locallight" ? (
+        <>
+          {/* Left: flat local colour (albedo). Right: the light alone. */}
+          <defs>
+            <clipPath id={`ll-l-${seed}`}><rect x={0} y={0} width={W / 2} height={H} /></clipPath>
+            <clipPath id={`ll-r-${seed}`}><rect x={W / 2} y={0} width={W / 2} height={H} /></clipPath>
+            <radialGradient id={`ll-g-${seed}`} cx="0.75" cy="0.2" r="1.1">
+              <stop offset="0%" stopColor="#f7f2e4" />
+              <stop offset="60%" stopColor="#9a917f" />
+              <stop offset="100%" stopColor="#4a443a" />
+            </radialGradient>
+          </defs>
+          <rect width={W} height={H} fill="#fffdf7" />
+          <g clipPath={`url(#ll-l-${seed})`}>
+            {shown.map((b, i) => (
+              <path key={i} d={b.path} fill={ALL[b.ci % ALL.length]} />
+            ))}
+          </g>
+          <g clipPath={`url(#ll-r-${seed})`}>
+            <rect width={W} height={H} fill={`url(#ll-g-${seed})`} />
+            {shown.map((b, i) => (
+              <path key={i} d={b.path} fill={GREY[b.ci % GREY.length]} opacity={0.35} />
+            ))}
+          </g>
+          <line x1={W / 2} y1={0} x2={W / 2} y2={H} stroke="#2b251b" strokeWidth={1.2} opacity={0.5} />
+        </>
+      ) : mode === "focus" ? (
+        <>
+          {/* Rule-of-thirds grid, one winning focal ring, one subdued rival */}
+          <rect width={W} height={H} fill="#fffdf7" />
+          {shown.map((b, i) => (
+            <path key={i} d={b.path} fill={ALL[b.ci % ALL.length]} opacity={0.35} />
+          ))}
+          {[W / 3, (2 * W) / 3].map(x => (
+            <line key={`v${x}`} x1={x} y1={0} x2={x} y2={H} stroke="#2b251b" strokeWidth={0.7} opacity={0.35} />
+          ))}
+          {[H / 3, (2 * H) / 3].map(y => (
+            <line key={`h${y}`} x1={0} y1={y} x2={W} y2={y} stroke="#2b251b" strokeWidth={0.7} opacity={0.35} />
+          ))}
+          <circle cx={(2 * W) / 3} cy={H / 3} r={26} fill="none" stroke="#b4511f" strokeWidth={2.2} opacity={0.9} />
+          <circle cx={W / 3 - 10} cy={(2 * H) / 3} r={17} fill="none" stroke="#3e5c76" strokeWidth={1.4} strokeDasharray="5 4" opacity={0.75} />
+        </>
+      ) : mode === "traps" ? (
+        <>
+          {/* Notan field with tinted rings where simultaneous contrast bites */}
+          <rect width={W} height={H} fill="#f3edde" />
+          {shown.map((b, i) => (
+            <path key={i} d={b.path} fill={NOTAN[b.ci % 3]} />
+          ))}
+          {[[W * 0.28, H * 0.32, 22, "#3e5c76"], [W * 0.68, H * 0.62, 26, "#b4511f"], [W * 0.82, H * 0.22, 15, "#3e5c76"]].map(([cx, cy, r, c], i) => (
+            <g key={i}>
+              <circle cx={cx as number} cy={cy as number} r={r as number} fill={c as string} opacity={0.22} />
+              <circle cx={cx as number} cy={cy as number} r={r as number} fill="none" stroke={c as string} strokeWidth={1.4} strokeDasharray="4 3" opacity={0.85} />
+            </g>
           ))}
         </>
       ) : mode === "palette" ? (
@@ -166,6 +244,21 @@ export default function ArtTile({
                   ))}
                 </g>
               );
+            }
+            if (mode === "subject") {
+              // Subject in full colour, surroundings desaturated and lifted
+              const focal = Math.hypot(b.x - W * 0.58, b.y - H * 0.45) < 46;
+              return focal
+                ? <path key={i} d={b.path} fill={ALL[b.ci % ALL.length]} />
+                : <path key={i} d={b.path} fill={GREY[b.ci % GREY.length]} opacity={0.35} />;
+            }
+            if (mode === "edges") {
+              // Warm crisp edges on the focal point, cool soft edges elsewhere
+              const focal = Math.hypot(b.x - W * 0.58, b.y - H * 0.45) < 52;
+              return <path key={i} d={b.path} fill="none"
+                           stroke={focal ? "#b4511f" : "#3e5c76"}
+                           strokeWidth={focal ? 1.8 : 0.8}
+                           opacity={focal ? 0.95 : 0.3} />;
             }
             // colour
             return <path key={i} d={b.path} fill={ALL[b.ci % ALL.length]} opacity={0.92} />;

@@ -31,6 +31,12 @@ _PROGRESS = {
     "color_palette":    42,
     "light_direction":  48,
     "color_by_number":  55,
+    "subject_focus":    56,
+    "depth_planes":     57,
+    "local_vs_light":   58,
+    "value_traps":      59,
+    "edge_coach":       61,
+    "composition":      63,
     "dot_to_dot":       65,
     "hierarchical":     75,
     "analysis_ready":   80,   # NEW — preliminary manifest written

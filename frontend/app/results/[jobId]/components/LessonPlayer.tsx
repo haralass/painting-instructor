@@ -49,6 +49,17 @@ export default function LessonPlayer({
   return (
     <div className="p-4 md:p-6 space-y-5">
 
+      {/* Session goal — the adaptive-profile lever, aimed at your clearest habit */}
+      {idx === 0 && steps[0]?.lesson_goal && (
+        <div className="rounded-xl p-4"
+             style={{ background: "rgba(62,92,118,0.07)", border: "1px solid rgba(62,92,118,0.28)" }}>
+          <p className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: "#3e5c76" }}>
+            Your goal this session
+          </p>
+          <p className="text-sm leading-relaxed" style={{ color: "var(--text)" }}>{steps[0].lesson_goal}</p>
+        </div>
+      )}
+
       {/* The teacher's brief — image-specific, computed from THIS photo */}
       {(brief?.overview || manifest.personal_observations) && idx === 0 && (
         <div className="rounded-xl p-4"
@@ -102,7 +113,15 @@ export default function LessonPlayer({
               {stepLabel} of {steps.filter(s => 1 <= s.order && s.order < 90).length}
               {manifest.input?.skill_level ? ` · ${manifest.input.skill_level}` : ""}
             </p>
-            <h2 className="text-xl font-bold mb-2" style={{ color: "var(--text)" }}>{step.name}</h2>
+            <h2 className="text-xl font-bold mb-2 flex items-center gap-2 flex-wrap" style={{ color: "var(--text)" }}>
+              {step.name}
+              {step.emphasis && (
+                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
+                      style={{ background: "rgba(62,92,118,0.1)", color: "#3e5c76", border: "1px solid rgba(62,92,118,0.35)" }}>
+                  Focus for you
+                </span>
+              )}
+            </h2>
             <p className="text-sm leading-relaxed" style={{ color: "var(--text)" }}>{step.description}</p>
           </div>
 
@@ -115,6 +134,21 @@ export default function LessonPlayer({
               </p>
               <ul className="space-y-2">
                 {step.image_notes.map((n, i) => (
+                  <li key={i} className="text-sm leading-relaxed" style={{ color: "var(--text)" }}>{n}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* From your critiques — the adaptive-profile watch-out for this stage */}
+          {step.profile_notes && step.profile_notes.length > 0 && (
+            <div className="rounded-xl p-3"
+                 style={{ background: "rgba(62,92,118,0.07)", border: "1px solid rgba(62,92,118,0.28)" }}>
+              <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: "#3e5c76" }}>
+                From your critiques
+              </p>
+              <ul className="space-y-2">
+                {step.profile_notes.map((n, i) => (
                   <li key={i} className="text-sm leading-relaxed" style={{ color: "var(--text)" }}>{n}</li>
                 ))}
               </ul>

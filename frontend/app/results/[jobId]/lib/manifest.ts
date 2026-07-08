@@ -7,7 +7,9 @@ export const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 export const STEP_STAGE: Record<string, number> = {
   loading: 0, line_art: 1, notan: 2, color_temperature: 3, color_palette: 3,
   light_direction: 3, color_by_number: 4, dot_to_dot: 1, hierarchical: 4,
-  video: 5, pdf: 5, manifest: 5, completed: 5,
+  subject_focus: 3, depth_planes: 3, local_vs_light: 3, value_traps: 2,
+  edge_coach: 4, composition: 4, analysis_ready: 4, observations: 4,
+  rendering_extras: 5, video: 5, pdf: 5, manifest: 5, completed: 5,
 };
 
 // ── Step labels for the progress display ─────────────────────────────────────
@@ -19,8 +21,17 @@ export const STEP_LABELS: Record<string, string> = {
   color_palette:    "Extracting colour palette…",
   light_direction:  "Finding light source…",
   color_by_number:  "Building paint-by-numbers…",
+  subject_focus:    "Rendering the focal subject…",
+  depth_planes:     "Mapping depth planes…",
+  local_vs_light:   "Separating colour from light…",
+  value_traps:      "Detecting perceptual traps…",
+  edge_coach:       "Mapping edge hardness…",
+  composition:      "Checking the composition…",
   dot_to_dot:       "Placing structural dots…",
   hierarchical:     "Building hierarchical regions…",
+  analysis_ready:   "Analysis complete — generating extras…",
+  observations:     "Looking at your image…",
+  rendering_extras: "Rendering video and PDF…",
   video:            "Rendering tutorial video…",
   pdf:              "Assembling PDF…",
   manifest:         "Writing manifest…",
@@ -211,6 +222,9 @@ export type Manifest = {
     assets: Record<string, string>;
     image_notes?: string[];
     image_micro_steps?: MicroStep[];
+    emphasis?: boolean;        // adaptive-profile lever: this stage targets your habit
+    profile_notes?: string[];  // adaptive-profile lever: watch-outs from your critiques
+    lesson_goal?: string;      // adaptive-profile lever: the session goal (first step)
   }[];
   image_brief?: {
     overview?: string;

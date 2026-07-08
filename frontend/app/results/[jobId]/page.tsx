@@ -357,6 +357,7 @@ export default function ResultsPage() {
               imageWidth={manifest?.image?.width}
               imageHeight={manifest?.image?.height}
               title={viewMode === "classic_analysis" && selected ? selected.title : (currentLevelData?.label ?? "")}
+              palette={manifest?.palette}
             />
 
             {/* A2: Classic page WHY explanation — only in classic_analysis mode */}

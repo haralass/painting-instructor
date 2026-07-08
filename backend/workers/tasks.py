@@ -89,6 +89,7 @@ def run_pipeline(
     from ..pipeline.dot_to_dot.processor import process as dot_to_dot
     from ..analysis.subject import subject_mask as compute_subject_mask
     from ..analysis.depth import depth_planes as compute_depth_planes
+    from ..analysis.albedo_shading import local_vs_light_page
     from ..pipeline.video.processor import generate as make_video
     from ..pipeline.stroke_paint.processor import render_stroke_frames
     from ..teaching.mediums import get_medium
@@ -260,6 +261,11 @@ def run_pipeline(
         planes = run("depth_planes", _planes_study)
         if planes:
             pages.append(save("depth_planes", planes))
+
+    # ── Local Colour vs Light study (classical intrinsic split) ───────────────
+    lvl_page = run("local_vs_light", lambda: local_vs_light_page(img))
+    if lvl_page:
+        pages.append(save("local_vs_light", lvl_page))
 
     notan_result = parallel_results.get("notan")
     if notan_result:

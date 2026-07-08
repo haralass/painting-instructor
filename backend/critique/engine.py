@@ -78,13 +78,11 @@ def _cell_centre(row: int, col: int) -> tuple[float, float]:
     return ((col + 0.5) / GRID, (row + 0.5) / GRID)
 
 
-def _align_attempt(ref: np.ndarray, att: np.ndarray) -> tuple[np.ndarray, bool]:
+def _orb_align(ref: np.ndarray, att: np.ndarray) -> tuple[np.ndarray, bool, float]:
     """
-    Photos of a painting are rarely taken square-on; a perspective-skewed
-    attempt shifts every grid cell and the localised feedback blames the
-    wrong areas. ORB features + RANSAC homography warp the attempt onto the
-    reference frame when enough reliable matches exist; otherwise the
-    resized attempt is used as-is. Returns (aligned_attempt, was_aligned).
+    ORB features + RANSAC homography warp the attempt onto the reference frame
+    when enough reliable matches exist. Returns (warped, ok, confidence) where
+    confidence is the RANSAC inlier fraction in [0,1].
     """
     H, W = ref.shape[:2]
     try:
@@ -94,29 +92,250 @@ def _align_attempt(ref: np.ndarray, att: np.ndarray) -> tuple[np.ndarray, bool]:
         k1, d1 = orb.detectAndCompute(g_ref, None)
         k2, d2 = orb.detectAndCompute(g_att, None)
         if d1 is None or d2 is None or len(k1) < 30 or len(k2) < 30:
-            return att, False
+            return att, False, 0.0
 
         matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
         matches = sorted(matcher.match(d2, d1), key=lambda m: m.distance)[:400]
         if len(matches) < 25:
-            return att, False
+            return att, False, 0.0
 
         src = np.float32([k2[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
         dst = np.float32([k1[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
         M, inliers = cv2.findHomography(src, dst, cv2.RANSAC, 5.0)
         if M is None or inliers is None or int(inliers.sum()) < 20:
-            return att, False
+            return att, False, 0.0
 
         # sanity: reject degenerate/extreme warps
         det = float(np.linalg.det(M[:2, :2]))
         if not (0.25 < abs(det) < 4.0):
-            return att, False
+            return att, False, 0.0
 
+        conf = float(np.clip(int(inliers.sum()) / max(len(matches), 1), 0.0, 1.0))
         warped = cv2.warpPerspective(att, M, (W, H), borderMode=cv2.BORDER_REPLICATE)
-        return warped, True
+        return warped, True, conf
     except Exception:
-        log.warning("attempt alignment failed; comparing unaligned", exc_info=True)
-        return att, False
+        log.warning("ORB alignment failed; comparing unaligned", exc_info=True)
+        return att, False, 0.0
+
+
+def _align_attempt(ref: np.ndarray, att: np.ndarray) -> tuple[np.ndarray, bool]:
+    """Back-compatible wrapper: returns (aligned_attempt, was_aligned)."""
+    warped, ok, _ = _orb_align(ref, att)
+    return warped, ok
+
+
+def _order_quad(pts: np.ndarray) -> np.ndarray:
+    """Order 4 points as top-left, top-right, bottom-right, bottom-left."""
+    pts = pts.astype(np.float32)
+    s = pts.sum(axis=1)
+    d = np.diff(pts, axis=1).ravel()
+    return np.float32([
+        pts[np.argmin(s)],   # tl: smallest x+y
+        pts[np.argmin(d)],   # tr: smallest y-x
+        pts[np.argmax(s)],   # br: largest x+y
+        pts[np.argmax(d)],   # bl: largest y-x
+    ])
+
+
+def _canvas_rectify(att: np.ndarray, ref_shape: tuple[int, int]) -> tuple[np.ndarray | None, float]:
+    """
+    Detect the canvas as the largest near-full-frame convex 4-point quad
+    (Canny -> findContours -> approxPolyDP) and warp it square-on onto the
+    reference frame with getPerspectiveTransform/warpPerspective. Conservative:
+    only accepts a quad that covers most of the frame, so it never fires on
+    interior shapes. Returns (warped or None, confidence).
+    """
+    H, W = ref_shape[:2]
+    try:
+        ah, aw = att.shape[:2]
+        img_area = float(ah * aw)
+        g = cv2.GaussianBlur(cv2.cvtColor(att, cv2.COLOR_RGB2GRAY), (5, 5), 0)
+        edges = cv2.Canny(g, 50, 150)
+        edges = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=1)
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        best, best_area = None, 0.0
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < 0.55 * img_area:
+                continue
+            peri = cv2.arcLength(cnt, True)
+            approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
+            if len(approx) != 4 or not cv2.isContourConvex(approx):
+                continue
+            if area > best_area:
+                best, best_area = approx, area
+        if best is None:
+            return None, 0.0
+        pts = best.reshape(4, 2).astype(np.float32)
+        xs, ys = pts[:, 0], pts[:, 1]
+        # require the quad to span most of the frame in both axes
+        if (xs.max() - xs.min()) < 0.7 * aw or (ys.max() - ys.min()) < 0.7 * ah:
+            return None, 0.0
+        src = _order_quad(pts)
+        dst = np.float32([[0, 0], [W - 1, 0], [W - 1, H - 1], [0, H - 1]])
+        M = cv2.getPerspectiveTransform(src, dst)
+        warped = cv2.warpPerspective(att, M, (W, H), borderMode=cv2.BORDER_REPLICATE)
+        conf = float(np.clip(best_area / img_area, 0.0, 1.0))
+        return warped, conf
+    except Exception:
+        log.warning("canvas rectify failed; falling back", exc_info=True)
+        return None, 0.0
+
+
+def _align_attempt_ex(ref: np.ndarray, att: np.ndarray) -> tuple[np.ndarray, str, float]:
+    """
+    Alignment with a fallback chain: canvas-quad rectify -> ORB homography ->
+    resize-only. Returns (aligned_attempt, method, confidence).
+    """
+    warped, conf = _canvas_rectify(att, ref.shape)
+    if warped is not None:
+        return warped, "canvas_quad", round(conf, 3)
+    warped, ok, conf = _orb_align(ref, att)
+    if ok:
+        return warped, "orb_homography", round(conf, 3)
+    return att, "resize", 0.0
+
+
+# Named metric keys, in the order the profile ranks them.
+METRIC_KEYS = (
+    "value_compression",   # + attempt's value range is compressed (too flat)
+    "temp_bias",           # + attempt globally too warm, - too cool
+    "temp_light_shadow",   # + attempt under-separates (lights not warm / shadows not cool)
+    "hue_error",           # signed net hue rotation of the attempt vs reference
+    "chroma_bias",         # + attempt globally oversaturated, - undersaturated
+    "edge_hardness",       # + attempt's focal edges too hard, - too soft
+)
+
+
+def _primary_edge_mask(edges_path: str | Path | None, shape: tuple[int, int]) -> np.ndarray | None:
+    """Rasterise primary/decorative (focal) edges from an edges.json into a mask."""
+    try:
+        data = json.loads(Path(edges_path).read_text())
+    except Exception:
+        return None
+    h, w = shape[:2]
+    mask = np.zeros((h, w), dtype=np.uint8)
+    drawn = 0
+    for e in data:
+        if e.get("type") not in ("primary", "decorative"):
+            continue
+        pts = e.get("path") or []
+        if len(pts) < 2:
+            continue
+        arr = np.array(pts, dtype=np.int32).reshape(-1, 1, 2)
+        cv2.polylines(mask, [arr], False, 255, thickness=3)
+        drawn += 1
+    if drawn == 0:
+        return None
+    return mask > 0
+
+
+def _signed_metrics(
+    ref_gray: np.ndarray,
+    att_gray: np.ndarray,
+    ref_lab: np.ndarray,
+    att_lab: np.ndarray,
+    ref_chroma: np.ndarray,
+    att_chroma: np.ndarray,
+    edges_path: str | Path | None,
+) -> tuple[dict, dict]:
+    """
+    Compute the signed diagnostic error vector + per-metric confidence weights.
+    LAB channels follow OpenCV's convention (L,a,b in 0..255; a,b centred 128).
+    Colour metrics are measured after a white-balance/exposure normalisation
+    that removes the *global* cast only (local relationships are preserved).
+    """
+    eps = 1e-6
+    errors: dict[str, float] = {}
+    weights: dict[str, float] = {}
+
+    ref_L = ref_lab[..., 0]
+    att_L = att_lab[..., 0]
+    ref_b = ref_lab[..., 2]
+    att_b = att_lab[..., 2]
+
+    # colour confidence scales with how much chroma the reference actually has
+    colour_w = float(np.clip(np.mean(ref_chroma) / 20.0, 0.0, 1.0))
+
+    # value_compression: p5–p95 L* range, + = attempt flatter than reference
+    ref_rng = float(np.percentile(ref_L, 95) - np.percentile(ref_L, 5))
+    att_rng = float(np.percentile(att_L, 95) - np.percentile(att_L, 5))
+    errors["value_compression"] = float(np.clip((ref_rng - att_rng) / (ref_rng + eps), -1.0, 1.0))
+    weights["value_compression"] = 1.0
+
+    # temp_bias: the global b* cast that normalisation removes. + = warmer.
+    temp_bias_raw = float(np.mean(att_b) - np.mean(ref_b))
+    errors["temp_bias"] = float(np.clip(temp_bias_raw / 30.0, -1.0, 1.0))
+    weights["temp_bias"] = colour_w
+
+    # chroma_bias: global over/under-saturation. + = more saturated.
+    chroma_bias_raw = float(np.mean(att_chroma) - np.mean(ref_chroma))
+    errors["chroma_bias"] = float(np.clip(chroma_bias_raw / 40.0, -1.0, 1.0))
+    weights["chroma_bias"] = colour_w
+
+    # ── normalise the attempt to the reference (remove global cast only) ──────
+    att_lab_n = att_lab.copy()
+    try:
+        from skimage.exposure import match_histograms
+        att_lab_n[..., 0] = match_histograms(att_L, ref_L)
+    except Exception:
+        pass
+    att_lab_n[..., 1] = att_lab_n[..., 1] - (np.mean(att_lab[..., 1]) - np.mean(ref_lab[..., 1]))
+    att_lab_n[..., 2] = att_lab_n[..., 2] - (np.mean(att_lab[..., 2]) - np.mean(ref_lab[..., 2]))
+
+    # temp_light_shadow: lights-warm / shadows-cool separation, measured after
+    # cast removal. + = attempt UNDER-separates vs the reference (common habit).
+    lo, hi = np.percentile(ref_L, [33, 66])
+    shadow = ref_L <= lo
+    light = ref_L >= hi
+
+    def _mmean(img, mask):
+        return float(np.mean(img[mask])) if bool(mask.any()) else 0.0
+
+    ref_split = _mmean(ref_b, light) - _mmean(ref_b, shadow)
+    att_split = _mmean(att_lab_n[..., 2], light) - _mmean(att_lab_n[..., 2], shadow)
+    errors["temp_light_shadow"] = float(np.clip((ref_split - att_split) / 20.0, -1.0, 1.0))
+    weights["temp_light_shadow"] = colour_w
+
+    # hue_error: chroma-weighted net hue rotation, after cast removal.
+    ref_h = np.arctan2(ref_lab[..., 2] - 128.0, ref_lab[..., 1] - 128.0)
+    att_h = np.arctan2(att_lab_n[..., 2] - 128.0, att_lab_n[..., 1] - 128.0)
+    dh = np.arctan2(np.sin(att_h - ref_h), np.cos(att_h - ref_h))
+    wgt = ref_chroma
+    hshift = float(np.sum(dh * wgt) / (np.sum(wgt) + eps))
+    errors["hue_error"] = float(np.clip(hshift / np.pi, -1.0, 1.0))
+    weights["hue_error"] = colour_w
+
+    # edge_hardness: gradient across the reference's focal edges, attempt vs
+    # reference. + = attempt's edges are too hard, - = too soft.
+    grad_ref = cv2.magnitude(
+        cv2.Sobel(ref_gray, cv2.CV_32F, 1, 0, ksize=3),
+        cv2.Sobel(ref_gray, cv2.CV_32F, 0, 1, ksize=3),
+    )
+    grad_att = cv2.magnitude(
+        cv2.Sobel(att_gray, cv2.CV_32F, 1, 0, ksize=3),
+        cv2.Sobel(att_gray, cv2.CV_32F, 0, 1, ksize=3),
+    )
+    band = cv2.dilate(cv2.Canny(ref_gray, 60, 140), np.ones((3, 3), np.uint8), iterations=2) > 0
+    focal = _primary_edge_mask(edges_path, ref_gray.shape)
+    if focal is not None:
+        inter = band & focal
+        if int(inter.sum()) >= 50:
+            band = inter
+    n_band = int(band.sum())
+    if n_band >= 25:
+        ref_e = float(np.mean(grad_ref[band]))
+        att_e = float(np.mean(grad_att[band]))
+        ratio = (att_e + eps) / (ref_e + eps)
+        errors["edge_hardness"] = float(np.clip(np.tanh(np.log(ratio)), -1.0, 1.0))
+        weights["edge_hardness"] = float(np.clip(ref_e / 50.0, 0.0, 1.0))
+    else:
+        errors["edge_hardness"] = 0.0
+        weights["edge_hardness"] = 0.0
+
+    errors = {k: round(errors[k], 4) for k in METRIC_KEYS}
+    weights = {k: round(weights[k], 4) for k in METRIC_KEYS}
+    return errors, weights
 
 
 def critique_attempt(
@@ -125,6 +344,7 @@ def critique_attempt(
     out_dir: str | Path,
     n_value_bands: int = 5,
     medium: str = "oil",
+    edges_path: str | Path | None = None,
 ) -> dict:
     """
     Compare a student attempt against the reference and write:
@@ -140,7 +360,8 @@ def critique_attempt(
     ref = _load_rgb(reference_path)
     h, w = ref.shape[:2]
     att = _load_rgb(attempt_path, size=(w, h))
-    att, aligned = _align_attempt(ref, att)
+    att, alignment_method, alignment_confidence = _align_attempt_ex(ref, att)
+    aligned = alignment_method != "resize"
 
     ref_gray = cv2.GaussianBlur(cv2.cvtColor(ref, cv2.COLOR_RGB2GRAY), (5, 5), 0)
     att_gray = cv2.GaussianBlur(cv2.cvtColor(att, cv2.COLOR_RGB2GRAY), (5, 5), 0)
@@ -264,6 +485,18 @@ def critique_attempt(
     denom = max(int(np.sum(ref_density >= EDGE_MIN_REFERENCE_DENSITY)), 1)
     structure_score = float(np.clip(100 * (1 - structure_flags / denom), 0, 100))
 
+    # ── 4. Signed diagnostic metrics (additive) ─────────────────────────────
+    #   Every metric is a signed error in ~[-1, 1] (0 = matches the reference),
+    #   a named 0–100 score, and a confidence weight in [0, 1]. These do NOT
+    #   change the existing scores/feedback; they feed the adaptive profile.
+    if edges_path is None:
+        cand = out_dir.parent.parent / "edges.json"
+        edges_path = cand if cand.exists() else None
+    errors, weights = _signed_metrics(
+        ref_gray, att_gray, ref_lab, att_lab, ref_chroma, att_chroma, edges_path,
+    )
+    metric_scores = {k: round(100.0 * (1.0 - min(abs(v), 1.0)), 1) for k, v in errors.items()}
+
     overall = round(0.45 * value_score + 0.3 * colour_score + 0.25 * structure_score, 1)
 
     # Rank worst-first; the student should fix values before colour.
@@ -295,6 +528,11 @@ def critique_attempt(
         "medium": medium,
         "n_value_bands": n_value_bands,
         "aligned": aligned,
+        "alignment_method": alignment_method,
+        "alignment_confidence": alignment_confidence,
+        "errors": errors,
+        "weights": weights,
+        "metric_scores": metric_scores,
         "elapsed_sec": round(time.perf_counter() - t0, 2),
     }
 

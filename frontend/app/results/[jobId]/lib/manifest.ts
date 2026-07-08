@@ -44,6 +44,11 @@ export const PAGE_LABELS: Record<string, { title: string; why: string; tip: stri
     why:   "A local depth model splits the scene into foreground, middle-ground and background. Atmospheric perspective means distance reads as cooler, lighter and lower in contrast — warm/sharp up front, cool/soft far away.",
     tip:   "Push the background cooler, lighter and softer than it looks; reserve your warmest, darkest, hardest-edged notes for the foreground.",
   },
+  local_vs_light: {
+    title: "Local Colour vs Light",
+    why:   "Left is the local colour with the light divided out; right is the light alone. A shadow isn't a different colour — it's the same local colour under less light. Mix the local colour first, then adjust it for the light.",
+    tip:   "Judge an object's true colour from the lit-and-shadowed average, then push it warmer/lighter in the light and cooler/darker in shadow — don't reach for a whole new colour.",
+  },
   notan: {
     title: "Value Study (Notan)",
     why:   "Notan is a Japanese design concept — before you touch colour, you must get your lights and darks right. A painting with correct values reads in black and white.",

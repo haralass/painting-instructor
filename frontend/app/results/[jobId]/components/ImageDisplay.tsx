@@ -1,4 +1,5 @@
 import LayerStack from "./LayerStack";
+import InspectLoupe, { type PaletteEntry } from "./InspectLoupe";
 import { type CompareMode } from "../lib/manifest";
 
 // ── Image display with comparison modes ───────────────────────────────────────
@@ -11,6 +12,7 @@ export default function ImageDisplay({
   imageWidth,
   imageHeight,
   title,
+  palette,
 }: {
   compareMode:   CompareMode;
   analysisUrl?:  string;
@@ -20,6 +22,7 @@ export default function ImageDisplay({
   imageWidth?:   number;
   imageHeight?:  number;
   title:         string;
+  palette?:      PaletteEntry[];
 }) {
   // Determine what to show in the "analysis" slot
   // If a classic page is selected, show it as a single image; otherwise show the layer stack
@@ -29,7 +32,7 @@ export default function ImageDisplay({
     return (
       <div>
         <p className="text-xs mb-2" style={{ color: "var(--text-dim)" }}>Reference photo</p>
-        <img src={referenceUrl} alt="Reference" className="w-full rounded-xl object-contain max-h-[520px]" />
+        <InspectLoupe imageUrl={referenceUrl} palette={palette} alt="Reference" />
       </div>
     );
   }

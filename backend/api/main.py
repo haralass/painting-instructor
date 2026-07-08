@@ -180,7 +180,7 @@ def get_job(job_id: str) -> JobResponse:
 
 # ── POST /jobs/{job_id}/critique ──────────────────────────────────────────────
 @app.post("/jobs/{job_id}/critique")
-async def critique_job(job_id: str, file: UploadFile):
+async def critique_job(job_id: str, file: UploadFile, user_id: str | None = Form(None)):
     """
     Upload a photo of the student's own painting attempt and get localised,
     actionable feedback against this job's reference image. Runs synchronously
@@ -231,6 +231,17 @@ async def critique_job(job_id: str, file: UploadFile):
 
     result["attempt"] = attempt_no
     save_critique(result, attempt_dir)
+
+    # Adaptive painter profile — deterministic, no LLM. Only engages when a
+    # user_id is supplied; behaviour is otherwise unchanged. Never let a
+    # profiling failure break the critique response.
+    if user_id:
+        try:
+            from ..critique.profile import record_critique, recompute_profile
+            record_critique(user_id, result)
+            result["profile"] = recompute_profile(user_id)
+        except Exception:
+            pass
 
     # Convert filesystem paths to /outputs URLs for the frontend
     result["assets"] = {k: _path_to_url(v, job_id) for k, v in result["assets"].items()}

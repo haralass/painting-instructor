@@ -39,6 +39,22 @@ def _attempt_oversaturated() -> Image.Image:
     return Image.fromarray(arr.astype(np.uint8))
 
 
+def _attempt_value_compressed() -> Image.Image:
+    """Same picture but every value pulled toward mid grey (flat range)."""
+    arr = np.array(_reference()).astype(np.float64)
+    mid = float(arr.mean())
+    arr = mid + (arr - mid) * 0.4      # squash the value range to 40%
+    return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
+
+
+def _attempt_too_warm() -> Image.Image:
+    """Correct values/structure but a global warm cast over the whole picture."""
+    arr = np.array(_reference()).astype(np.int16)
+    arr[..., 0] = np.clip(arr[..., 0] + 40, 0, 255)   # more red
+    arr[..., 2] = np.clip(arr[..., 2] - 40, 0, 255)   # less blue
+    return Image.fromarray(arr.astype(np.uint8))
+
+
 class TestCritiqueEngine:
     def test_identical_attempt_scores_high_no_feedback(self, tmp_path):
         ref = tmp_path / "ref.png"
@@ -108,6 +124,45 @@ class TestCritiqueEngine:
 
         result = critique_attempt(ref, att, tmp_path / "out")
         assert result["scores"]["overall"] >= 90
+
+    # ── new signed metrics (additive) ────────────────────────────────────────
+    def test_signed_metrics_present_and_neutral_when_identical(self, tmp_path):
+        ref = tmp_path / "ref.png"
+        _reference().save(ref)
+        att = tmp_path / "att.png"
+        _reference().save(att)
+
+        result = critique_attempt(ref, att, tmp_path / "out")
+        # keys exist and cover every named metric
+        from backend.critique.engine import METRIC_KEYS
+        assert set(result["errors"]) == set(METRIC_KEYS)
+        assert set(result["weights"]) == set(METRIC_KEYS)
+        assert set(result["metric_scores"]) == set(METRIC_KEYS)
+        assert "alignment_method" in result and "alignment_confidence" in result
+        # an identical painting has ~zero signed error and near-perfect scores
+        assert all(abs(v) < 0.05 for v in result["errors"].values())
+        assert all(s >= 95 for s in result["metric_scores"].values())
+
+    def test_value_compressed_attempt_flags_value_compression(self, tmp_path):
+        ref = tmp_path / "ref.png"
+        _reference().save(ref)
+        att = tmp_path / "att.png"
+        _attempt_value_compressed().save(att)
+
+        result = critique_attempt(ref, att, tmp_path / "out")
+        # a squashed value range shows up as a strong positive compression error
+        assert result["errors"]["value_compression"] > 0.3
+        assert result["metric_scores"]["value_compression"] < 70
+
+    def test_over_warm_attempt_flags_warm_temp_bias(self, tmp_path):
+        ref = tmp_path / "ref.png"
+        _reference().save(ref)
+        att = tmp_path / "att.png"
+        _attempt_too_warm().save(att)
+
+        result = critique_attempt(ref, att, tmp_path / "out")
+        # positive temp_bias == too warm (our sign convention)
+        assert result["errors"]["temp_bias"] > 0.3
 
 
 class TestCritiqueEndpoint:

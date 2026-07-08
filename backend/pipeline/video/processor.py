@@ -104,6 +104,7 @@ def generate(
     out_w: int = OUT_W,
     medium_stages: list[dict] | None = None,
     stage_images: dict[int, Image.Image] | None = None,
+    stroke_frames: list[Image.Image] | None = None,
 ) -> dict:
     """
     Generate progressive painting tutorial video.
@@ -129,6 +130,7 @@ def generate(
     """
     stages = medium_stages or []
     stage_imgs = stage_images or {}
+    stroke_seq = stroke_frames or []
 
     # ── standardise sizes ─────────────────────────────────────────────────
     W_ref, H_ref = reference.size
@@ -213,17 +215,28 @@ def generate(
     f3 = _label_frame(notan_on_canvas, name3, desc3)
     _write([f3] * (fps // 2))
 
-    # ── Phase 4: Colour blocking (fade in over notan) ─────────────────────
+    # ── Phase 4: Colour — real stroke-by-stroke painting when available ───
     name4, desc4 = _stage_label(stages, 4, "Step 4 — Colour Blocking", "Fill flat colour zones — match your palette numbers")
     _mark(4, name4)
-    color_on_canvas = apply_lines(color_arr, line_alpha=0.7)
-    for i in range(anim_n):
-        t = i / max(1, anim_n - 1)
-        frame = _lerp(notan_on_canvas, color_on_canvas, t)
-        frame = _label_frame(frame, name4, desc4)
-        _write([frame])
-    f4 = _label_frame(color_on_canvas, name4, desc4)
-    _write([f4] * (fps // 2))
+    if stroke_seq:
+        # Actual oil strokes accumulating on the canvas (blank → painted),
+        # big masses first — the "watch it painted" phase. Pace the frames so
+        # the whole sequence spans roughly the same time as the old crossfade.
+        stroke_arrs = [_to_rgb(s, size) for s in stroke_seq]
+        hold_each = max(1, (2 * anim_n) // len(stroke_arrs))
+        for arr in stroke_arrs:
+            _write([_label_frame(arr, name4, "Paint the masses stroke by stroke — big shapes first")] * hold_each)
+        color_on_canvas = stroke_arrs[-1]
+        _write([_label_frame(color_on_canvas, name4, desc4)] * (fps // 2))
+    else:
+        color_on_canvas = apply_lines(color_arr, line_alpha=0.7)
+        for i in range(anim_n):
+            t = i / max(1, anim_n - 1)
+            frame = _lerp(notan_on_canvas, color_on_canvas, t)
+            frame = _label_frame(frame, name4, desc4)
+            _write([frame])
+        f4 = _label_frame(color_on_canvas, name4, desc4)
+        _write([f4] * (fps // 2))
 
     # ── Phase 5a: Edge refinement (short hold, stage 5's own label) ───────
     name5, desc5 = _stage_label(stages, 5, "Step 5 — Edge Refinement", "Harden the edges that matter, soften the rest")
@@ -234,7 +247,9 @@ def generate(
     # ── Phase 5b: Detail & texture (re-apply crisp lines, stage 6 label) ──
     name6, desc6 = _stage_label(stages, 6, "Step 6 — Detail & Edges", "Sharpen edges, add final accents and highlights")
     _mark(6, name6)
-    detail = apply_lines(detail_arr, line_alpha=1.0)
+    # With real strokes the finished painting IS the detail frame — don't
+    # stamp line art back over the brushwork.
+    detail = color_on_canvas if stroke_seq else apply_lines(detail_arr, line_alpha=1.0)
     for i in range(anim_n):
         t = i / max(1, anim_n - 1)
         frame = _lerp(color_on_canvas, detail, t)

@@ -90,6 +90,7 @@ def run_pipeline(
     from ..analysis.subject import subject_mask as compute_subject_mask
     from ..analysis.depth import depth_planes as compute_depth_planes
     from ..pipeline.video.processor import generate as make_video
+    from ..pipeline.stroke_paint.processor import render_stroke_frames
     from ..teaching.mediums import get_medium
     from ..teaching.lesson import build_lesson_plan
     from ..teaching.pdf_book import build_tutorial_pdf
@@ -449,6 +450,9 @@ def run_pipeline(
             t0 = time.perf_counter()
             video_path = str(out_dir / "tutorial.mp4")
             stage_images = _resolve_stage_images(lesson_plan_abs)
+            # Real oil strokes for the "painted stroke by stroke" phase; guarded
+            # so any failure just falls back to the crossfade animation.
+            stroke_frames = _run_silent("stroke_paint", lambda: render_stroke_frames(img, max_frames=40))
             video_result = make_video(
                 reference=img,
                 line_art=la_result,
@@ -459,6 +463,7 @@ def run_pipeline(
                 out_w=1080,
                 medium_stages=medium_cfg.get("stages", []),
                 stage_images=stage_images,
+                stroke_frames=stroke_frames,
             )
             video_chapters = video_result.get("chapters", [])
             timings["video"] = round(time.perf_counter() - t0, 2)

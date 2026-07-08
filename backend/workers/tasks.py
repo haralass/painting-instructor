@@ -57,6 +57,7 @@ def run_pipeline(
     region_complexity: int = 3,   # A6: 1–5 hierarchy resolution
     skill_level: str = "intermediate",
     user_id: str | None = None,
+    brand_id: str | None = None,
     # backward-compat alias
     n_colors: int = 0,
 ) -> dict:
@@ -454,6 +455,7 @@ def run_pipeline(
         texture_detail=texture_detail,
         background_detail=background_detail,
         skill_level=skill_level,
+        brand_id=brand_id,
         image_brief=image_brief,
         lesson_plan=lesson_plan_rel,
     )
@@ -560,6 +562,7 @@ def run_pipeline(
         texture_detail=texture_detail,
         background_detail=background_detail,
         skill_level=skill_level,
+        brand_id=brand_id,
         image_brief=image_brief,
         video_chapters=video_chapters,
         personal_observations=personal_observations,
@@ -579,11 +582,16 @@ def run_pipeline(
     }
 
 
-def _palette_with_recipes(palette: list[dict], medium: str) -> list[dict]:
-    """Kubelka-Munk tube recipes for paint mediums; graceful no-op otherwise."""
+def _palette_with_recipes(
+    palette: list[dict], medium: str, brand_id: str | None = None
+) -> list[dict]:
+    """Kubelka-Munk tube recipes for paint mediums; graceful no-op otherwise.
+
+    When ``brand_id`` names a real brand its tubes are used; unknown/None
+    behaves exactly as before (generic default palette)."""
     try:
         from ..teaching.mixing import recipes_for_palette
-        return recipes_for_palette(palette, medium)
+        return recipes_for_palette(palette, medium, brand_id=brand_id)
     except Exception:
         log.warning("palette mixing recipes failed", exc_info=True)
         return palette
@@ -688,6 +696,7 @@ def _build_manifest(
     texture_detail: bool = True,
     background_detail: bool = False,
     skill_level: str = "intermediate",
+    brand_id: str | None = None,
     image_brief: dict | None = None,
     video_chapters: list[dict] | None = None,
     personal_observations: str | None = None,
@@ -718,6 +727,7 @@ def _build_manifest(
             "texture_detail":      texture_detail,
             "background_detail":   background_detail,
             "skill_level":         skill_level,
+            "brand_id":            brand_id,
         },
         "image": {"width": w, "height": h},
         "reference": f"{job_id}/reference{ref_suffix}",
@@ -726,7 +736,7 @@ def _build_manifest(
         "edge_maps":      edge_maps_rel,    # A4: individual sublayer maps
         "outline_composites": outline_composites_rel,
         "value_zones_map": value_zones_map,
-        "palette":        _palette_with_recipes(hier.get("palette", []), medium),
+        "palette":        _palette_with_recipes(hier.get("palette", []), medium, brand_id),
         "colour_families":hier.get("colour_families", []),
         "value_zones":    hier.get("value_zone_list", []),
         "video":  rel_to_outputs(video_path),

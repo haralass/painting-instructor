@@ -125,6 +125,58 @@ class TestCreateJob:
                                   data={"medium": medium, "palette_size": "12"})
             assert res.status_code == 200, f"medium={medium} should be accepted"
 
+    def test_brand_id_accepted_and_threaded(self):
+        """Posting a job with a brand_id still succeeds (200) and the brand is
+        threaded into the pipeline kwargs."""
+        captured = {}
+        def _capture(*args, **kwargs):
+            captured.update(kwargs.get("kwargs", {}))
+            m = MagicMock(); m.id = kwargs.get("task_id"); return m
+
+        with patch("backend.workers.tasks.run_pipeline.apply_async", side_effect=_capture):
+            res = client.post("/jobs/", files=[_make_upload()],
+                              data={"medium": "oil", "palette_size": "12",
+                                    "brand_id": "winsor_newton_oil"})
+        assert res.status_code == 200
+        assert captured.get("brand_id") == "winsor_newton_oil"
+
+    def test_brand_id_omitted_is_none(self):
+        """Without brand_id the pipeline receives brand_id=None (today's behaviour)."""
+        captured = {}
+        def _capture(*args, **kwargs):
+            captured.update(kwargs.get("kwargs", {}))
+            m = MagicMock(); m.id = kwargs.get("task_id"); return m
+
+        with patch("backend.workers.tasks.run_pipeline.apply_async", side_effect=_capture):
+            res = client.post("/jobs/", files=[_make_upload()],
+                              data={"medium": "oil", "palette_size": "12"})
+        assert res.status_code == 200
+        assert captured.get("brand_id") is None
+
+
+class TestBrandsEndpoint:
+    def test_list_brands_returns_brands(self):
+        res = client.get("/brands")
+        assert res.status_code == 200
+        data = res.json()
+        assert isinstance(data, list) and len(data) > 0
+        for key in ("id", "name", "medium", "tube_count"):
+            assert key in data[0], f"brand entry missing {key!r}"
+
+    def test_list_brands_filters_by_medium(self):
+        res = client.get("/brands?medium=oil")
+        assert res.status_code == 200
+        oils = res.json()
+        assert len(oils) > 0
+        assert all(b["medium"] == "oil" for b in oils)
+        # Filtered set is a subset of the unfiltered set
+        assert len(oils) <= len(client.get("/brands").json())
+
+    def test_list_brands_unknown_medium_empty(self):
+        res = client.get("/brands?medium=pencil")
+        assert res.status_code == 200
+        assert res.json() == []
+
 
 # ── GET /jobs/{job_id} ────────────────────────────────────────────────────────
 class TestGetJob:

@@ -55,6 +55,13 @@ type Stage = {
   analysis_layers?: string[];
 };
 
+type Brand = {
+  id: string;
+  name: string;
+  medium: string;
+  tube_count: number;
+};
+
 type MediumCfg = {
   name: string;
   recommended_value_zones?: number;
@@ -87,6 +94,8 @@ export default function HomePage() {
   const [preview,     setPreview]     = useState<string | null>(null);
   const [medium,      setMedium]      = useState("oil");
   const [skillLevel,  setSkillLevel]  = useState("intermediate");
+  const [brands,      setBrands]      = useState<Brand[]>([]);
+  const [brandId,     setBrandId]     = useState("");   // "" = generic palette
   const [paletteSize, setPaletteSize] = useState(12);
   const [initialViewLevel, setInitialViewLevel] = useState(3);
   const [valueZones,  setValueZones]  = useState<3 | 5 | 7>(5);
@@ -112,6 +121,21 @@ export default function HomePage() {
       })
       .catch(() => {});
   }, [medium]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Real-paint tube sets for the chosen medium — "mix from YOUR set". Refetched
+  // whenever the medium changes; the field is optional and resets to the generic
+  // palette when the current brand isn't offered for the new medium.
+  useEffect(() => {
+    const api = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    fetch(`${api}/brands?medium=${encodeURIComponent(medium)}`)
+      .then(r => r.ok ? r.json() : [])
+      .then((data: Brand[]) => {
+        const list = Array.isArray(data) ? data : [];
+        setBrands(list);
+        setBrandId(prev => (list.some(b => b.id === prev) ? prev : ""));
+      })
+      .catch(() => { setBrands([]); setBrandId(""); });
+  }, [medium]);
 
   const stages = mediumCfg.stages ?? [];
 
@@ -233,6 +257,7 @@ export default function HomePage() {
       form.append("texture_detail",    String(textureDetail));
       form.append("background_detail", String(bgDetail));
       form.append("skill_level",       skillLevel);
+      if (brandId) form.append("brand_id", brandId);
 
       const res = await fetch(`${API}/jobs/`, { method: "POST", body: form });
       if (!res.ok) {
@@ -274,6 +299,11 @@ export default function HomePage() {
                     style={{ color: "var(--text-dim)", background: "none", border: "none", cursor: "pointer" }}>
               Your studies
             </button>
+            <a href="/gallery"
+               className="hidden md:inline text-sm px-3 py-2 transition-colors"
+               style={{ color: "var(--text-dim)", textDecoration: "none" }}>
+              Gallery
+            </a>
             <button onClick={() => scrollToSection("#create")} className="btn-primary" style={{ padding: "10px 22px", fontSize: 14 }}>
               Start painting
             </button>
@@ -559,6 +589,29 @@ export default function HomePage() {
                 <p className="text-xs mt-2.5" style={{ color: "var(--text-dim)" }}>
                   {SKILL_LEVELS.find(s => s.id === skillLevel)?.tip}
                 </p>
+
+                {/* Your paint set — mix recipes from a real brand's tubes.
+                    Only shown for mediums that ship real-paint sets. */}
+                {brands.length > 0 && (
+                  <div className="mt-5">
+                    <label className="label-xs block mb-2">Your paint set (optional)</label>
+                    <div className="flex flex-wrap gap-2">
+                      <button onClick={() => setBrandId("")} className="chip" data-active={brandId === ""}>
+                        Generic palette
+                      </button>
+                      {brands.map(b => (
+                        <button key={b.id} onClick={() => setBrandId(b.id)} className="chip" data-active={brandId === b.id}>
+                          {b.name}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-xs mt-2.5" style={{ color: "var(--text-dim)" }}>
+                      {brandId
+                        ? "Mixing recipes are built from this set's real tubes."
+                        : "Recipes use a generic 12-tube starter palette. Pick your brand to mix from tubes you own."}
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* 3 · Colour & values */}

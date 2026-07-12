@@ -25,7 +25,14 @@ from ..schemas.jobs import (
 from ..teaching.mediums import MEDIUMS, get_medium as _get_medium_cfg
 from ..teaching.mixing import list_brands
 
-app = FastAPI(title="Painting Instructor API", version="0.3.0")
+from ..capabilities import registry_payload, validate_registry
+
+app = FastAPI(title="Painting Instructor API", version="0.4.0")
+
+# The registry is code — fail loudly at import time if its invariants break.
+_registry_problems = validate_registry()
+if _registry_problems:
+    raise RuntimeError(f"Capability registry invalid: {_registry_problems}")
 
 # ── CORS ─────────────────────────────────────────────────────────────────────
 _origins = os.getenv(
@@ -264,6 +271,15 @@ def download_pdf(job_id: str):
     if not pdf_path.exists():
         raise HTTPException(404, "PDF not ready yet")
     return FileResponse(pdf_path, media_type="application/pdf", filename="tutorial_book.pdf")
+
+
+@app.get("/capabilities")
+def get_capabilities():
+    """The shared capability contract: what the product can do, which
+    interaction modes each capability supports, pipeline step metadata and
+    detail-level labels. The landing page, gallery and workspace are all
+    generated from / validated against this payload."""
+    return registry_payload()
 
 
 @app.get("/brands")

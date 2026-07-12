@@ -20,33 +20,12 @@ celery_app.conf.task_serializer   = "json"
 celery_app.conf.result_serializer = "json"
 celery_app.conf.accept_content    = ["json"]
 
-# Progress checkpoints per step
-_PROGRESS = {
-    "loading":          5,
-    "preprocessing":    10,
-    "line_art":         15,
-    "notan":            25,
-    "value_analysis":   30,
-    "color_temperature":35,
-    "color_palette":    42,
-    "light_direction":  48,
-    "color_by_number":  55,
-    "subject_focus":    56,
-    "depth_planes":     57,
-    "local_vs_light":   58,
-    "value_traps":      59,
-    "edge_coach":       61,
-    "composition":      63,
-    "dot_to_dot":       65,
-    "hierarchical":     75,
-    "analysis_ready":   80,   # NEW — preliminary manifest written
-    "observations":     82,
-    "rendering_extras": 85,   # NEW — starting video/PDF
-    "video":            88,
-    "pdf":              93,
-    "manifest":         97,
-    "completed":        100,
-}
+# Progress checkpoints + messages come from the shared capability registry
+# (backend/capabilities.py) — the single source every surface reads, so a new
+# pipeline step cannot ship without its progress/label metadata again.
+from ..capabilities import STEP_INFO
+
+_PROGRESS = {name: info.pct for name, info in STEP_INFO.items()}
 
 
 @celery_app.task(bind=True, name="art_book.run_pipeline")
@@ -122,34 +101,9 @@ def run_pipeline(
     timings: dict[str, float] = {}
 
     def progress(name: str) -> None:
-        pct = _PROGRESS.get(name, 5)
-        msg = {
-            "loading":          "Loading image",
-            "subject_mask":     "Isolating the subject",
-            "depth":            "Estimating depth",
-            "line_art":         "Drawing outlines",
-            "subject_focus":    "Rendering the focal subject",
-            "depth_planes":     "Mapping depth planes",
-            "local_vs_light":   "Separating colour from light",
-            "notan":            "Mapping values",
-            "value_traps":      "Detecting perceptual traps",
-            "color_temperature":"Analysing warm/cool tones",
-            "color_palette":    "Extracting colour palette",
-            "light_direction":  "Finding light source",
-            "color_by_number":  "Building paint-by-numbers",
-            "dot_to_dot":       "Placing structural dots",
-            "edge_coach":       "Mapping edge hardness",
-            "composition":      "Checking the composition",
-            "hierarchical":     "Building hierarchical regions",
-            "analysis_ready":   "Analysis complete — generating extras",
-            "observations":     "Looking at your image",
-            "rendering_extras": "Rendering video and PDF",
-            "stroke_paint":     "Painting the brushstrokes",
-            "video":            "Rendering tutorial video",
-            "pdf":              "Assembling PDF book",
-            "manifest":         "Writing manifest",
-            "completed":        "Tutorial ready",
-        }.get(name, name)
+        info = STEP_INFO.get(name)
+        pct = info.pct if info else 5
+        msg = info.message if info else name
         self.update_state(
             state="PROGRESS",
             meta={"step": name, "progress": pct, "message": msg, "errors": errors},

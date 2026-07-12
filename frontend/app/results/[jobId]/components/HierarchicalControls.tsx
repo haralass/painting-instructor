@@ -49,7 +49,7 @@ export default function HierarchicalControls({
              onChange={e => { setDetailLevel(Number(e.target.value)); setViewMode("hierarchical_lesson"); }}
              className="w-full accent-orange-700" />
       <div className="flex justify-between text-xs mt-1" style={{ color: "var(--text-dim)" }}>
-        <span>Foundation</span><span>Full Reference</span>
+        <span>{LEVEL_LABELS[1]}</span><span>{LEVEL_LABELS[5]}</span>
       </div>
 
       {/* Independent layer toggles */}

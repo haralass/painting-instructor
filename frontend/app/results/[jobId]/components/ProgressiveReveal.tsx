@@ -125,7 +125,9 @@ export default function ProgressiveReveal({
       {/* ── The current level ───────────────────────────────────────────── */}
       <div className="panel p-3" style={{ borderRadius: 18 }}>
         <p className="label-xs mb-2">
-          Level {revealed} · {levelData?.label ?? LEVEL_LABELS[revealed] ?? ""}
+          {/* Registry label first: old manifests persist the retired
+              "Full Reference" string for level 5. */}
+          Level {revealed} · {LEVEL_LABELS[revealed] ?? levelData?.label ?? ""}
         </p>
         <LayerStack
           assets={assets}

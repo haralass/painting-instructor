@@ -2,7 +2,7 @@
 import { useState, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { absUrl, outputUrl, type CompareMode } from "./lib/manifest";
+import { absUrl, outputUrl, LEVEL_LABELS, type CompareMode } from "./lib/manifest";
 import { useJobPolling } from "./hooks/useJobPolling";
 import LoadingScreen from "./components/LoadingScreen";
 import ImageDisplay from "./components/ImageDisplay";
@@ -372,7 +372,7 @@ export default function ResultsPage() {
               opacity={opacity}
               imageWidth={manifest?.image?.width}
               imageHeight={manifest?.image?.height}
-              title={viewMode === "classic_analysis" && selected ? selected.title : (currentLevelData?.label ?? "")}
+              title={viewMode === "classic_analysis" && selected ? selected.title : (LEVEL_LABELS[detailLevel] ?? currentLevelData?.label ?? "")}
               palette={manifest?.palette}
             />
 

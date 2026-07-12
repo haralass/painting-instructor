@@ -6,9 +6,17 @@ import { ScrollTrigger } from "gsap/ScrollTrigger";
 import SmoothScroll, { scrollToSection } from "./components/SmoothScroll";
 import AtelierHero from "./components/AtelierHero";
 import KineticTitle from "./components/KineticTitle";
-import ArtTile, { ArtMode } from "./components/ArtTile";
 import EvolvingCanvas, { STAGE_VISUAL_COUNT } from "./components/EvolvingCanvas";
 import { painterUserId } from "./lib/user";
+import { CAPABILITIES, DETAIL_LEVELS, MEDIUM_FALLBACKS } from "./lib/contract.generated";
+
+// The one shared catalogue: studies shown here are exactly the advertised
+// capabilities with real sample assets — the same list the gallery renders
+// and the workspace unlocks. Deliverables (video/PDF) are presented apart,
+// never as studies.
+const STUDY_CARDS  = CAPABILITIES.filter(c => c.advertised && c.sample);
+const DELIVERABLES = CAPABILITIES.filter(c => c.category === "deliverable");
+const TEACHING     = CAPABILITIES.filter(c => c.category === "teaching" && c.advertised);
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -25,31 +33,6 @@ const SKILL_LEVELS = [
   { id: "beginner",     label: "Beginner",     tip: "Adds a value warm-up rehearsal before the real painting." },
   { id: "intermediate", label: "Intermediate", tip: "The standard lesson for your medium." },
   { id: "advanced",     label: "Advanced",     tip: "Adds a measured self-critique pass at the end." },
-];
-
-const INITIAL_VIEW_LEVELS = [
-  { value: 1, label: "Foundation",     desc: "Basic shapes + primary contours only. Best for beginners.", regions: "4–8 masses" },
-  { value: 2, label: "Simplified",     desc: "Major forms + key shadows. Quick study.",                   regions: "8–20 regions" },
-  { value: 3, label: "Standard",       desc: "Balanced detail + colour zones. Most paintings.",           regions: "20–60 regions" },
-  { value: 4, label: "Detailed",       desc: "Fine regions, decorative elements, texture.",               regions: "60–180 regions" },
-  { value: 5, label: "Full Reference", desc: "Every detected layer — complete hierarchical breakdown.",   regions: "150–400 regions" },
-];
-
-const ANALYSIS_TILES: { mode: ArtMode; title: string; desc: string; count: number }[] = [
-  { mode: "line",        title: "Line Art",           desc: "Weighted ink contours — silhouette, interior forms, texture.", count: 20 },
-  { mode: "notan",       title: "Value Study",        desc: "Notan — lights and darks resolved before any colour.", count: 30 },
-  { mode: "temperature", title: "Colour Temperature", desc: "Warm light, cool shadow — mapped across the image.", count: 34 },
-  { mode: "palette",     title: "Limited Palette",    desc: "Dominant colours by area, with real tube-mixing recipes.", count: 10 },
-  { mode: "light",       title: "Light & Shadow",     desc: "Gurney's five zones, from highlight to cast shadow.", count: 22 },
-  { mode: "numbers",     title: "Paint by Numbers",   desc: "Flat colour blocking — how every master starts a canvas.", count: 16 },
-  { mode: "dots",        title: "Structural Dots",    desc: "Connect them in order to build your under-drawing.", count: 10 },
-  { mode: "subject",     title: "Focal Subject",      desc: "Your subject isolated — where the eye must land first.", count: 40 },
-  { mode: "depth",       title: "Depth Planes",       desc: "Foreground, middle, background — atmospheric perspective mapped.", count: 36 },
-  { mode: "locallight",  title: "Local Colour vs Light", desc: "Colour split from light — a shadow is the same colour under less light.", count: 30 },
-  { mode: "traps",       title: "Value Traps",        desc: "Where simultaneous contrast will fool your eye — flagged before you paint.", count: 30 },
-  { mode: "edges",       title: "Edge Control",       desc: "Hard, soft and lost edges mapped, so sharpness leads the eye.", count: 24 },
-  { mode: "focus",       title: "Composition & Focus", desc: "Focal competition and rule-of-thirds placement, measured.", count: 40 },
-  { mode: "colour",      title: "Tutorial Video & PDF", desc: "A progressive video lesson and a printable tutorial book.", count: 60 },
 ];
 
 const VALUE_ZONE_OPTIONS = [3, 5, 7] as const;
@@ -77,20 +60,13 @@ type MediumCfg = {
   instructions?: Record<string, string>;
 };
 
-/* Verbatim snapshot of backend/teaching/mediums/oil.py — shown until the
-   live config arrives (or if the backend is down), so the method section
-   never lies about what the lesson teaches. */
-const OIL_FALLBACK: MediumCfg = {
-  name: "Oil Paint",
-  stages: [
-    { order: 1, name: "Toned ground",     description: "Apply a mid-value imprimatura thinned with turpentine. Wipe off lights with a rag. This kills the white and sets a mid-value starting point.", why: "A white canvas lies to you: every colour you place on it looks darker than it is, so you overlighten everything. Starting from a mid-value means your first value judgements are already relative to something true." },
-    { order: 2, name: "Lay-in / block-in", description: "With a large flat brush, block the major dark masses using thinned colour. Do not render — only map the shadow shapes. Think in 2 tones: shadow and light.", why: "The shadow shapes carry the whole structure of the image — if they are placed right, the painting reads correctly even with no detail at all." },
-    { order: 3, name: "Value masses",     description: "Add the mid-tones and begin to differentiate the 5 Gurney zones. Work from dark to light. Paint thinner in darks, thicker in lights.", why: "Light paint is opaque and dark paint is transparent: lights placed last sit on top and stay clean. Thin darks keep the fat-over-lean rule intact." },
-    { order: 4, name: "Colour modelling", description: "Introduce colour temperature: warm lights, cool shadows. Start mixing directly on the canvas. Do not overblend — keep the masses readable.", why: "Form is communicated by temperature as much as by value — a warm light against a cool shadow reads as sunlight even at equal values." },
-    { order: 5, name: "Edge refinement",  description: "Harden primary structural edges. Soften transitions within shadow masses. Lost edges in darks; found edges in lights.", why: "The eye locks onto the hardest edge in the picture. If every edge is equally sharp, nothing is important." },
-    { order: 6, name: "Detail & texture", description: "Add decorative details, texture, and final highlights. Use a small round brush. Keep the number of details to 10% of the surface.", why: "Detail is expensive: every added detail competes for attention with the focal point." },
-  ],
-};
+/* Per-medium stage fallback — GENERATED from the real backend configs
+   (contract.generated.ts), shown until the live config arrives or if the
+   backend is down, so the method section never lies about the lesson. */
+function fallbackCfg(mediumId: string): MediumCfg {
+  const fb = MEDIUM_FALLBACKS[mediumId] ?? MEDIUM_FALLBACKS.oil;
+  return { name: fb.name, stages: fb.stages };
+}
 
 export default function HomePage() {
   const router   = useRouter();
@@ -113,10 +89,13 @@ export default function HomePage() {
   const [loading,     setLoading]     = useState(false);
   const [error,       setError]       = useState<string | null>(null);
 
-  const [mediumCfg,   setMediumCfg]   = useState<MediumCfg>(OIL_FALLBACK);
+  const [mediumCfg,   setMediumCfg]   = useState<MediumCfg>(() => fallbackCfg("oil"));
   const [activeStage, setActiveStage] = useState(0);
 
   useEffect(() => {
+    // Show the generated fallback for the new medium immediately; the live
+    // config replaces it when (if) the backend answers.
+    setMediumCfg(fallbackCfg(medium));
     const api = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
     fetch(`${api}/mediums/${medium}`)
       .then(r => r.ok ? r.json() : null)
@@ -282,7 +261,7 @@ export default function HomePage() {
   }
 
   const selectedMedium = MEDIUMS.find(m => m.id === medium);
-  const selectedDetail = INITIAL_VIEW_LEVELS.find(d => d.value === initialViewLevel);
+  const selectedDetail = DETAIL_LEVELS.find(d => d.level === initialViewLevel);
   const visualFor = (i: number) =>
     Math.round((i / Math.max(stages.length - 1, 1)) * (STAGE_VISUAL_COUNT - 1));
 
@@ -465,14 +444,15 @@ export default function HomePage() {
                 A complete <em className="text-gradient">atelier analysis</em>
               </h2>
               <p className="mt-5 max-w-lg mx-auto" style={{ color: "var(--text-dim)" }}>
-                Fourteen studies generated from your photo — the same preparation
-                a classical painter would make before touching the canvas.
+                {STUDY_CARDS.length} studies generated from your photo — every one
+                below is a real output from the demo reference, the same list you
+                get in the workspace.
               </p>
             </div>
 
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-5" style={{ perspective: 1200 }}>
-              {ANALYSIS_TILES.map((t, i) => (
-                <div key={t.title} className="an-tile rounded-2xl overflow-hidden group"
+              {STUDY_CARDS.map(c => (
+                <div key={c.id} className="an-tile rounded-2xl overflow-hidden group"
                      style={{
                        background: "var(--surface)",
                        border: "1px solid var(--border)",
@@ -481,23 +461,33 @@ export default function HomePage() {
                        willChange: "transform",
                      }}>
                   <div className="relative" style={{ aspectRatio: "4/3", overflow: "hidden", borderBottom: "1px solid var(--border)" }}>
-                    <div className="transition-transform duration-700 group-hover:scale-110" style={{ height: "100%" }}>
-                      <ArtTile mode={t.mode} seed={7 + i * 13} count={t.count} />
-                    </div>
-                    {t.mode === "colour" && (
-                      <div className="absolute inset-0 flex items-center justify-center"
-                           style={{ background: "rgba(36,31,22,0.28)" }}>
-                        <div className="w-14 h-14 rounded-full flex items-center justify-center"
-                             style={{ background: "rgba(255,253,247,0.95)", color: "var(--accent)", fontSize: 20, paddingLeft: 4 }}>
-                          ▶
-                        </div>
-                      </div>
-                    )}
+                    <img src={`/samples/demo1/${c.sample}`} alt={`${c.name} study, generated from the demo reference.`}
+                         loading="lazy"
+                         className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
                   </div>
                   <div className="p-4">
-                    <p className="font-display text-base mb-1" style={{ color: "var(--ink)" }}>{t.title}</p>
-                    <p className="text-xs leading-relaxed" style={{ color: "var(--text-dim)" }}>{t.desc}</p>
+                    <p className="font-display text-base mb-1" style={{ color: "var(--ink)" }}>{c.name}</p>
+                    <p className="text-xs leading-relaxed" style={{ color: "var(--text-dim)" }}>{c.description}</p>
                   </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Deliverables + teaching surfaces — real capabilities, but not
+                image studies, so they are never counted or shown as such. */}
+            <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-4 mt-10">
+              {[...TEACHING, ...DELIVERABLES].map(c => (
+                <div key={c.id} className="p-5 rounded-2xl"
+                     style={{ background: "var(--surface-2)", border: "1px dashed var(--border-strong)" }}>
+                  <span className="text-[11px] px-2.5 py-1 rounded-full font-semibold"
+                        style={{
+                          background: c.category === "deliverable" ? "var(--cool)" : "var(--sage)",
+                          color: "var(--paper)",
+                        }}>
+                    {c.category === "deliverable" ? "Deliverable" : "Interactive"}
+                  </span>
+                  <p className="font-display text-lg mt-3 mb-1" style={{ color: "var(--ink)" }}>{c.name}</p>
+                  <p className="text-xs leading-relaxed" style={{ color: "var(--text-dim)" }}>{c.description}</p>
                 </div>
               ))}
             </div>
@@ -664,15 +654,15 @@ export default function HomePage() {
                 </p>
                 <label className="label-xs block mb-3">Starting view level</label>
                 <div className="flex flex-wrap gap-2">
-                  {INITIAL_VIEW_LEVELS.map(d => (
-                    <button key={d.value} onClick={() => setInitialViewLevel(d.value)} className="chip" data-active={initialViewLevel === d.value}>
+                  {DETAIL_LEVELS.map(d => (
+                    <button key={d.level} onClick={() => setInitialViewLevel(d.level)} className="chip" data-active={initialViewLevel === d.level}>
                       {d.label}
                     </button>
                   ))}
                 </div>
                 {selectedDetail && (
                   <p className="text-xs mt-2.5" style={{ color: "var(--text-dim)" }}>
-                    {selectedDetail.desc} <span style={{ opacity: 0.75 }}>({selectedDetail.regions})</span>
+                    {selectedDetail.description} <span style={{ opacity: 0.75 }}>({selectedDetail.regions_hint})</span>
                   </p>
                 )}
                 <label className="label-xs block mb-3 mt-6">

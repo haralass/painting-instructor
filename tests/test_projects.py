@@ -113,3 +113,40 @@ def test_endpoints_roundtrip(store, client):
     assert full["checkpoints"][0]["type"] == "values"
 
     assert client.get("/projects/does-not-exist").status_code == 404
+
+
+# ── Resume path: finished jobs must open without the broker ──────────────────
+
+def test_finished_job_resumes_from_disk_manifest(store, client):
+    """Celery results expire from Redis; the on-disk manifest is the durable
+    record a saved project resumes from (brief §18)."""
+    import json, os
+    from pathlib import Path
+    out_root = Path(os.environ["OUTPUTS_DIR"])
+    job_dir = out_root / "resume-job"
+    job_dir.mkdir(parents=True)
+    (job_dir / "manifest.json").write_text(json.dumps({
+        "job_id": "resume-job",
+        "pages": ["resume-job/notan.png"],
+        "video": "resume-job/tutorial.mp4",
+        "pdf": None,
+    }))
+    body = client.get("/jobs/resume-job").json()
+    assert body["status"] == "completed"
+    assert body["result"]["manifest"] == "/outputs/resume-job/manifest.json"
+    assert body["result"]["pages"] == ["/outputs/resume-job/notan.png"]
+    assert body["result"]["video"] == "/outputs/resume-job/tutorial.mp4"
+
+
+def test_analysis_ready_manifest_reports_processing(store, client):
+    import json, os
+    from pathlib import Path
+    out_root = Path(os.environ["OUTPUTS_DIR"])
+    job_dir = out_root / "midway-job"
+    job_dir.mkdir(parents=True)
+    (job_dir / "manifest.json").write_text(json.dumps({
+        "job_id": "midway-job", "status": "analysis_ready", "pages": [],
+    }))
+    body = client.get("/jobs/midway-job").json()
+    assert body["status"] == "processing"
+    assert body["analysis_ready"] is True

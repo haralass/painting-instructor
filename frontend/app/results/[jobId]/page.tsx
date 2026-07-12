@@ -133,7 +133,9 @@ export default function ResultsPage() {
       ];
 
   return (
-    <main className="min-h-screen flex flex-col" style={{ background: "var(--bg)" }}>
+    // h-screen + overflow-hidden: the shell owns the viewport; each panel
+    // scrolls independently. No page-level scroll, no giant empty columns.
+    <main className="h-screen flex flex-col overflow-hidden" style={{ background: "var(--bg)" }}>
 
       {/* ── Top bar ─────────────────────────────────────────────────────────── */}
       <header className="flex items-center justify-between px-6 py-4 border-b flex-shrink-0"
@@ -293,56 +295,6 @@ export default function ResultsPage() {
             <SquintSimulator referenceUrl={referenceUrl} notanUrl={notanUrl} />
           ) : (<>
 
-          {/* About Your Image — grounded in this job's own analysis (Claude
-              vision call), not a per-medium template. Absent entirely when
-              ANTHROPIC_API_KEY isn't configured on the backend. */}
-          {manifest?.personal_observations && (
-            <div className="p-4 border-b flex-shrink-0" style={{ borderColor: "var(--border)" }}>
-              <p className="text-xs font-semibold uppercase tracking-widest mb-2"
-                 style={{ color: "var(--text-dim)" }}>About Your Image</p>
-              <p className="text-sm leading-relaxed" style={{ color: "var(--text)" }}>
-                {manifest.personal_observations}
-              </p>
-            </div>
-          )}
-
-          {/* Video — A3: show pending state during progressive delivery */}
-          <div className="p-4 border-b flex-shrink-0" style={{ borderColor: "var(--border)" }}>
-            <p className="text-xs font-semibold uppercase tracking-widest mb-2"
-               style={{ color: "var(--text-dim)" }}>Tutorial Video</p>
-            {videoReady ? (
-              <>
-                <video ref={videoRef} src={absUrl(manifest!.video!)} controls className="w-full rounded-xl"
-                       style={{ background: "#000", maxHeight: 380 }} />
-                {manifest?.video_chapters && manifest.video_chapters.length > 0 && (
-                  <div className="flex gap-1.5 flex-wrap mt-2">
-                    {manifest.video_chapters.map(ch => (
-                      <button
-                        key={ch.order}
-                        onClick={() => {
-                          if (videoRef.current) {
-                            videoRef.current.currentTime = ch.start_sec;
-                            videoRef.current.play();
-                          }
-                        }}
-                        className="px-2.5 py-1 rounded text-xs border transition-colors"
-                        style={{ borderColor: "var(--border)", color: "var(--text-dim)" }}>
-                        {ch.name}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className="w-full rounded-xl flex items-center justify-center"
-                   style={{ background: "var(--surface)", height: 180 }}>
-                <p className="text-sm" style={{ color: "var(--text-dim)" }}>
-                  Video is still rendering…
-                </p>
-              </div>
-            )}
-          </div>
-
           {/* ── Hierarchical detail slider ──────────────────────────────── */}
           {manifest?.detail_levels && Object.keys(manifest.detail_levels).length > 0 && (
             <HierarchicalControls
@@ -409,6 +361,62 @@ export default function ResultsPage() {
                 ))}
               </div>
             )}
+
+            {/* Secondary material lives BELOW the image, collapsed — the
+                workspace opens on the image, not on a video (brief §19/O). */}
+            {manifest?.personal_observations && (
+              <details className="mt-4 rounded-xl overflow-hidden"
+                       style={{ border: "1px solid var(--border)" }}>
+                <summary className="px-4 py-3 text-xs font-semibold uppercase tracking-widest cursor-pointer select-none"
+                         style={{ color: "var(--text-dim)" }}>
+                  About your image
+                </summary>
+                <p className="px-4 pb-4 text-sm leading-relaxed" style={{ color: "var(--text)" }}>
+                  {manifest.personal_observations}
+                </p>
+              </details>
+            )}
+
+            <details className="mt-3 rounded-xl overflow-hidden"
+                     style={{ border: "1px solid var(--border)" }}>
+              <summary className="px-4 py-3 text-xs font-semibold uppercase tracking-widest cursor-pointer select-none"
+                       style={{ color: "var(--text-dim)" }}>
+                Tutorial video {videoReady ? "" : "· rendering…"}
+              </summary>
+              <div className="px-4 pb-4">
+                {videoReady ? (
+                  <>
+                    <video ref={videoRef} src={absUrl(manifest!.video!)} controls className="w-full rounded-xl"
+                           style={{ background: "#000", maxHeight: 380 }} />
+                    {manifest?.video_chapters && manifest.video_chapters.length > 0 && (
+                      <div className="flex gap-1.5 flex-wrap mt-2">
+                        {manifest.video_chapters.map(ch => (
+                          <button
+                            key={ch.order}
+                            onClick={() => {
+                              if (videoRef.current) {
+                                videoRef.current.currentTime = ch.start_sec;
+                                videoRef.current.play();
+                              }
+                            }}
+                            className="px-2.5 py-1 rounded text-xs border transition-colors"
+                            style={{ borderColor: "var(--border)", color: "var(--text-dim)" }}>
+                            {ch.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="w-full rounded-xl flex items-center justify-center"
+                       style={{ background: "var(--surface)", height: 120 }}>
+                    <p className="text-sm" style={{ color: "var(--text-dim)" }}>
+                      Video is still rendering — it will appear here.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </details>
           </div>
           </>)}
         </section>

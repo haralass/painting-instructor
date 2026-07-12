@@ -157,15 +157,63 @@ async def create_job(
 
 
 # ── GET /jobs/{job_id} ────────────────────────────────────────────────────────
+def _manifest_fallback(job_id: str) -> JobResponse | None:
+    """Resume path (brief §18): the manifest on disk is the durable record of
+    a finished job. Celery results expire from Redis (default 24 h) and Redis
+    may have restarted — a saved project must still open, so a final manifest
+    answers 'completed' without consulting the broker at all."""
+    m_path = outputs_root() / job_id / "manifest.json"
+    if not m_path.exists():
+        return None
+    try:
+        m = json.loads(m_path.read_text())
+    except Exception:
+        return None
+    if m.get("status") == "analysis_ready":
+        # Prelim manifest: analysis done, extras possibly still rendering —
+        # only used when the broker no longer knows the job.
+        return JobResponse(
+            job_id=job_id, status="processing", progress=80, step="analysis_ready",
+            message="Analysis ready — extras may still be rendering",
+            analysis_ready=True,
+        )
+    return JobResponse(
+        job_id=job_id, status="completed", progress=100, step="completed",
+        message="Tutorial ready",
+        result=JobResult(
+            manifest=f"/outputs/{job_id}/manifest.json",
+            pages=[f"/outputs/{p}" for p in m.get("pages", [])],
+            video=f"/outputs/{m['video']}" if m.get("video") else None,
+            pdf=f"/outputs/{m['pdf']}" if m.get("pdf") else None,
+        ),
+    )
+
+
 @app.get("/jobs/{job_id}", response_model=JobResponse)
 def get_job(job_id: str) -> JobResponse:
     """Poll job status. Returns canonical status + progress + result when done."""
     from celery.result import AsyncResult
 
-    r = AsyncResult(job_id, app=celery_app)
-    state = r.state
+    # Durable fast path: a FINAL manifest on disk means completed, regardless
+    # of what (or whether) the result backend remembers.
+    disk = _manifest_fallback(job_id)
+    if disk is not None and disk.status == "completed":
+        return disk
+
+    try:
+        r = AsyncResult(job_id, app=celery_app)
+        state = r.state
+    except Exception:
+        # Result backend unreachable — fall back to whatever disk knows.
+        return disk or JobResponse(
+            job_id=job_id, status="queued", progress=0, step="queued",
+            message="Waiting to start",
+        )
 
     if state in ("PENDING", "RECEIVED"):
+        # An expired/forgotten job that reached analysis_ready still resumes.
+        if disk is not None:
+            return disk
         return JobResponse(job_id=job_id, status="queued", progress=0, step="queued", message="Waiting to start")
 
     if state in ("STARTED", "PROGRESS"):

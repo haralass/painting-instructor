@@ -8,6 +8,18 @@
 > verification: `GET /jobs/{id}` now completes from the on-disk manifest, so
 > saved projects reopen after the Celery result expires. Remaining Phase-1
 > non-goals move to Phase 2+ as planned; Phase 2 (viewer) starts next.
+>
+> **PHASE 2 — STARTED (commit `991674b`).** Shipped: OpenSeadragon viewer in
+> Explore Layers (zoom/pan/fit/100%/flip/minimap, aligned overlay images with
+> live opacity) and region click-select against the existing merge tree via
+> new per-level RGB-encoded label maps + regions.json (verified live:
+> click → region → value family / colour family / area / parent mass).
+> Remaining Phase 2: rectangle/polygon/lasso selection + selection
+> refinement, "analyse this area" local re-analysis of the full-res crop,
+> before/after slider + synchronized compare inside the viewer, SVG (vector)
+> overlays replacing PNG overlays where feasible, and region hover
+> highlight. Known dev-only noise: StrictMode's first-mount teardown logs an
+> OSD drawer assert.
 
 Companion to `REDESIGN_AUDIT.md`. Brief by design; the audit holds the rationale.
 

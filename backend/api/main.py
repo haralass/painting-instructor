@@ -111,6 +111,31 @@ async def create_job(
     img_path = UPLOAD_DIR / f"{job_id}{suffix}"
     img_path.write_bytes(await file.read())
 
+    # Every upload is a resumable project (brief §18). The worker copies the
+    # untouched original to outputs/{job}/reference{suffix}; we record that
+    # canonical location now. A store failure must never block the job.
+    try:
+        from ..projects import store as project_store
+        project_store.create_project(
+            job_id=job_id,
+            reference_path=f"{job_id}/reference{suffix}",
+            medium=medium,
+            skill_level=skill_level,
+            value_zones=value_zones,
+            settings={
+                "palette_size":       resolved_palette,
+                "initial_view_level": initial_view_level,
+                "region_complexity":  region_complexity,
+                "texture_detail":     texture_detail,
+                "background_detail":  background_detail,
+                "brand_id":           brand_id,
+                "user_id":            user_id,
+            },
+        )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("project row creation failed", exc_info=True)
+
     run_pipeline.apply_async(
         args=[str(img_path), job_id],
         kwargs={
@@ -255,6 +280,22 @@ async def critique_job(job_id: str, file: UploadFile, user_id: str | None = Form
         except Exception:
             pass
 
+    # Record the attempt on the project so progress survives the session
+    # (save/continue, brief §18). Never let this break the critique response.
+    try:
+        from ..projects import store as project_store
+        project = project_store.get_project_by_job(job_id)
+        if project:
+            project_store.add_attempt(
+                project["id"],
+                path=str(attempt_path.relative_to(outputs_root())),
+                critique={"priority": result.get("priority"),
+                          "metric_scores": result.get("metric_scores")},
+            )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("attempt recording failed", exc_info=True)
+
     # Convert filesystem paths to /outputs URLs for the frontend
     result["assets"] = {k: _path_to_url(v, job_id) for k, v in result["assets"].items()}
     result["attempt_image"] = _path_to_url(str(attempt_path), job_id)
@@ -271,6 +312,86 @@ def download_pdf(job_id: str):
     if not pdf_path.exists():
         raise HTTPException(404, "PDF not ready yet")
     return FileResponse(pdf_path, media_type="application/pdf", filename="tutorial_book.pdf")
+
+
+# ── Projects: save & continue (brief §18 — Phase-1 foundation) ───────────────
+from pydantic import BaseModel as _BaseModel
+
+
+class _ProjectPatch(_BaseModel):
+    title: str | None = None
+    current_capability: str | None = None
+
+
+class _StepStatus(_BaseModel):
+    step_id: str
+    status: str  # pending|in_progress|completed|skipped
+    data: dict = {}
+
+
+class _CheckpointUpsert(_BaseModel):
+    type: str    # schemas/lesson.py CheckpointType
+    status: str = "open"
+    data: dict = {}
+    checkpoint_id: str | None = None
+
+
+@app.get("/projects")
+def list_projects(limit: int = 20):
+    from ..projects import store as project_store
+    return project_store.list_projects(limit=min(max(limit, 1), 100))
+
+
+@app.get("/projects/{project_id}")
+def get_project(project_id: str):
+    from ..projects import store as project_store
+    project = project_store.get_project(project_id)
+    if project is None:
+        raise HTTPException(404, "Project not found")
+    project["lesson_progress"] = project_store.get_lesson_progress(project_id)
+    project["checkpoints"]     = project_store.get_checkpoints(project_id)
+    project["corrections"]     = project_store.get_corrections(project_id)
+    project["attempts"]        = project_store.get_attempts(project_id)
+    return project
+
+
+@app.patch("/projects/{project_id}")
+def patch_project(project_id: str, body: _ProjectPatch):
+    from ..projects import store as project_store
+    if body.current_capability is not None:
+        from ..capabilities import resolve_capability_id
+        if resolve_capability_id(body.current_capability) is None:
+            raise HTTPException(422, f"Unknown capability: {body.current_capability!r}")
+    project = project_store.update_project(
+        project_id, title=body.title, current_capability=body.current_capability,
+    )
+    if project is None:
+        raise HTTPException(404, "Project not found")
+    return project
+
+
+@app.post("/projects/{project_id}/progress")
+def set_progress(project_id: str, body: _StepStatus):
+    from ..projects import store as project_store
+    if project_store.get_project(project_id) is None:
+        raise HTTPException(404, "Project not found")
+    try:
+        return project_store.set_step_status(project_id, body.step_id, body.status, body.data)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+
+@app.post("/projects/{project_id}/checkpoints")
+def upsert_checkpoint(project_id: str, body: _CheckpointUpsert):
+    from ..projects import store as project_store
+    if project_store.get_project(project_id) is None:
+        raise HTTPException(404, "Project not found")
+    try:
+        return project_store.upsert_checkpoint(
+            project_id, body.type, body.status, body.data, body.checkpoint_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
 
 
 @app.get("/capabilities")

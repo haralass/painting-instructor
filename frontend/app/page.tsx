@@ -95,6 +95,20 @@ export default function HomePage() {
   const [mediumCfg,   setMediumCfg]   = useState<MediumCfg>(() => fallbackCfg("oil"));
   const [activeStage, setActiveStage] = useState(0);
 
+  // Save & continue: recent projects from the backend store. Empty (and the
+  // strip hidden) when the backend is down or nothing was ever uploaded.
+  type RecentProject = {
+    id: string; job_id: string | null; title: string; medium: string;
+    reference_path: string; updated_at: string;
+  };
+  const [recent, setRecent] = useState<RecentProject[]>([]);
+  useEffect(() => {
+    fetch(`${API}/projects?limit=6`)
+      .then(r => (r.ok ? r.json() : []))
+      .then((data: RecentProject[]) => setRecent(Array.isArray(data) ? data.filter(p => p.job_id) : []))
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     // Show the generated fallback for the new medium immediately; the live
     // config replaces it when (if) the backend answers.
@@ -495,6 +509,33 @@ export default function HomePage() {
               ))}
             </div>
           </section>
+
+          {/* ── Continue where you left off ────────────────────────────── */}
+          {recent.length > 0 && (
+            <section className="px-6 md:px-12 pb-4 max-w-7xl mx-auto">
+              <div className="flex items-center gap-3 mb-4">
+                <p className="label-xs">Continue where you left off</p>
+                <span className="h-px flex-1" style={{ background: "var(--border)" }} />
+              </div>
+              <div className="flex gap-4 overflow-x-auto pb-2">
+                {recent.map(p => (
+                  <a key={p.id} href={`/results/${p.job_id}`}
+                     className="flex-shrink-0 w-52 rounded-2xl overflow-hidden transition-transform duration-300 hover:-translate-y-1"
+                     style={{ background: "var(--surface)", border: "1px solid var(--border)", textDecoration: "none" }}>
+                    <img src={`${API}/outputs/${p.reference_path}`} alt=""
+                         className="w-full object-cover" style={{ aspectRatio: "4/3" }}
+                         onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                    <div className="p-3">
+                      <p className="text-sm font-medium truncate" style={{ color: "var(--ink)" }}>{p.title}</p>
+                      <p className="text-xs mt-0.5" style={{ color: "var(--text-dim)" }}>
+                        {p.medium} · {new Date(p.updated_at).toLocaleDateString()}
+                      </p>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            </section>
+          )}
 
           {/* ── The studio ─────────────────────────────────────────────── */}
           <section id="create" className="px-6 pt-16 pb-32 flex flex-col items-center">

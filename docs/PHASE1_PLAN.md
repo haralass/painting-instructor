@@ -1,5 +1,14 @@
 # Phase 1 — Implementation Note
 
+> **STATUS (2026-07-12): COMPLETE.** All items below shipped on
+> `feature/phase1-foundations` (commits `9e2f308…a324507`); full suite 268
+> passed, `next build` clean, live-verified in the browser (landing =
+> gallery = workspace = 14 studies from the registry, "Full Detail"
+> everywhere, resume-from-disk works without Redis). Extra fix found during
+> verification: `GET /jobs/{id}` now completes from the on-disk manifest, so
+> saved projects reopen after the Celery result expires. Remaining Phase-1
+> non-goals move to Phase 2+ as planned; Phase 2 (viewer) starts next.
+
 Companion to `REDESIGN_AUDIT.md`. Brief by design; the audit holds the rationale.
 
 ## Files / modules

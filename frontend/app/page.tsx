@@ -88,6 +88,9 @@ export default function HomePage() {
   const [dragging,    setDragging]    = useState(false);
   const [loading,     setLoading]     = useState(false);
   const [error,       setError]       = useState<string | null>(null);
+  // Implementation-level knobs (superpixel seeding, raw cluster counts, edge
+  // toggles) live behind this disclosure — painters shouldn't need them.
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const [mediumCfg,   setMediumCfg]   = useState<MediumCfg>(() => fallbackCfg("oil"));
   const [activeStage, setActiveStage] = useState(0);
@@ -613,24 +616,14 @@ export default function HomePage() {
                 )}
               </div>
 
-              {/* 3 · Colour & values */}
+              {/* 3 · Values */}
               <div>
                 <p className="font-display text-xl mb-1" style={{ color: "var(--ink)" }}>
-                  <span style={{ color: "var(--accent)" }}>3.</span> Colour &amp; values
+                  <span style={{ color: "var(--accent)" }}>3.</span> Value simplification
                 </p>
                 <p className="text-xs mb-4" style={{ color: "var(--text-dim)" }}>
-                  How many colours you&rsquo;ll mix, and how finely light is divided.
+                  How finely light is divided — the backbone of the painting.
                 </p>
-                <label className="label-xs block mb-3">
-                  Palette size — <span style={{ color: "var(--accent)" }}>{paletteSize} colours</span>
-                </label>
-                <input type="range" min={6} max={32} step={2} value={paletteSize}
-                       onChange={e => setPaletteSize(Number(e.target.value))}
-                       className="w-full" />
-                <div className="flex justify-between text-xs mt-1.5" style={{ color: "var(--text-dim)" }}>
-                  <span>6 (minimal)</span><span>32 (detailed)</span>
-                </div>
-                <label className="label-xs block mb-3 mt-6">Value zones</label>
                 <div className="flex gap-2">
                   {VALUE_ZONE_OPTIONS.map(n => (
                     <button key={n} onClick={() => setValueZones(n)} className="chip" data-active={valueZones === n}>
@@ -643,16 +636,15 @@ export default function HomePage() {
                 </p>
               </div>
 
-              {/* 4 · Detail */}
+              {/* 4 · Starting view */}
               <div>
                 <p className="font-display text-xl mb-1" style={{ color: "var(--ink)" }}>
-                  <span style={{ color: "var(--accent)" }}>4.</span> Detail &amp; edges
+                  <span style={{ color: "var(--accent)" }}>4.</span> Starting view
                 </p>
                 <p className="text-xs mb-4" style={{ color: "var(--text-dim)" }}>
-                  How much the analysis breaks your photo apart. All five view
-                  levels are always generated — you choose where the lesson opens.
+                  All five view levels are always generated — you only choose
+                  where the lesson opens. The reference itself is never simplified.
                 </p>
-                <label className="label-xs block mb-3">Starting view level</label>
                 <div className="flex flex-wrap gap-2">
                   {DETAIL_LEVELS.map(d => (
                     <button key={d.level} onClick={() => setInitialViewLevel(d.level)} className="chip" data-active={initialViewLevel === d.level}>
@@ -665,47 +657,78 @@ export default function HomePage() {
                     {selectedDetail.description} <span style={{ opacity: 0.75 }}>({selectedDetail.regions_hint})</span>
                   </p>
                 )}
-                <label className="label-xs block mb-3 mt-6">
-                  Region complexity — <span style={{ color: "var(--accent)" }}>
-                    {["", "Minimal", "Simplified", "Balanced", "Detailed", "Maximum"][regionComplexity]}
+              </div>
+
+              {/* Advanced — implementation-level knobs, collapsed by default.
+                  Kept functional for debugging/power use; a normal lesson
+                  never needs them (brief §4). */}
+              <div className="rounded-2xl" style={{ border: "1px dashed var(--border-strong)" }}>
+                <button onClick={() => setAdvancedOpen(o => !o)}
+                        className="w-full flex items-center justify-between px-5 py-4"
+                        style={{ background: "none", border: "none", cursor: "pointer" }}>
+                  <span className="text-sm font-medium" style={{ color: "var(--text-dim)" }}>
+                    Advanced (technical) settings
                   </span>
-                </label>
-                <input type="range" min={1} max={5} step={1} value={regionComplexity}
-                       onChange={e => setRegionComplexity(Number(e.target.value))}
-                       className="w-full" />
-                <div className="flex justify-between text-xs mt-1.5" style={{ color: "var(--text-dim)" }}>
-                  <span>1 (fewer, broader)</span><span>5 (more, finer)</span>
-                </div>
-                <p className="text-xs mt-1" style={{ color: "var(--text-dim)", opacity: 0.8 }}>
-                  Controls how many superpixels seed the hierarchy. Higher = more regions per level.
-                </p>
-                <div className="flex gap-6 flex-wrap mt-6">
-                  {[
-                    { label: "Texture edges",    checked: textureDetail, set: setTextureDetail,
-                      tip: "Include high-frequency texture contours (fabric, bark, fur)." },
-                    { label: "Background edges", checked: bgDetail,      set: setBgDetail,
-                      tip: "Analyse edges behind the main subject." },
-                  ].map(({ label, checked, set, tip }) => (
-                    <label key={label} className="flex items-center gap-3 cursor-pointer select-none">
-                      <button
-                        role="switch" aria-checked={checked}
-                        onClick={() => set(!checked)}
-                        className="relative w-10 h-6 rounded-full transition-colors"
-                        style={{
-                          background: checked ? "var(--accent)" : "var(--border)",
-                          border: "1px solid " + (checked ? "var(--accent)" : "var(--border-strong)"),
-                          cursor: "pointer",
-                        }}>
-                        <span className="absolute top-0.5 left-0.5 w-5 h-5 rounded-full transition-transform"
-                              style={{ background: "var(--paper)", transform: checked ? "translateX(16px)" : "translateX(0)" }} />
-                      </button>
-                      <span className="text-sm" style={{ color: checked ? "var(--ink)" : "var(--text-dim)" }}>
-                        {label}
-                      </span>
-                      <span className="hidden sm:inline text-xs" style={{ color: "var(--text-dim)", opacity: 0.8 }}>{tip}</span>
-                    </label>
-                  ))}
-                </div>
+                  <span style={{ color: "var(--accent)" }}>{advancedOpen ? "−" : "+"}</span>
+                </button>
+                {advancedOpen && (
+                  <div className="px-5 pb-5 space-y-6">
+                    <div>
+                      <label className="label-xs block mb-3">
+                        Palette size — <span style={{ color: "var(--accent)" }}>{paletteSize} colours</span>
+                      </label>
+                      <input type="range" min={6} max={32} step={2} value={paletteSize}
+                             onChange={e => setPaletteSize(Number(e.target.value))}
+                             className="w-full" />
+                      <div className="flex justify-between text-xs mt-1.5" style={{ color: "var(--text-dim)" }}>
+                        <span>6 (minimal)</span><span>32 (detailed)</span>
+                      </div>
+                      <p className="text-xs mt-1" style={{ color: "var(--text-dim)", opacity: 0.8 }}>
+                        Defaults to your medium&rsquo;s recommendation.
+                      </p>
+                    </div>
+                    <div>
+                      <label className="label-xs block mb-3">
+                        Region complexity — <span style={{ color: "var(--accent)" }}>
+                          {["", "Minimal", "Simplified", "Balanced", "Detailed", "Maximum"][regionComplexity]}
+                        </span>
+                      </label>
+                      <input type="range" min={1} max={5} step={1} value={regionComplexity}
+                             onChange={e => setRegionComplexity(Number(e.target.value))}
+                             className="w-full" />
+                      <div className="flex justify-between text-xs mt-1.5" style={{ color: "var(--text-dim)" }}>
+                        <span>1 (fewer, broader)</span><span>5 (more, finer)</span>
+                      </div>
+                    </div>
+                    <div className="flex gap-6 flex-wrap">
+                      {[
+                        { label: "Texture edges",    checked: textureDetail, set: setTextureDetail,
+                          tip: "Include high-frequency texture contours (fabric, bark, fur)." },
+                        { label: "Background edges", checked: bgDetail,      set: setBgDetail,
+                          tip: "Analyse edges behind the main subject." },
+                      ].map(({ label, checked, set, tip }) => (
+                        <label key={label} className="flex items-center gap-3 cursor-pointer select-none">
+                          <button
+                            role="switch" aria-checked={checked}
+                            onClick={() => set(!checked)}
+                            className="relative w-10 h-6 rounded-full transition-colors"
+                            style={{
+                              background: checked ? "var(--accent)" : "var(--border)",
+                              border: "1px solid " + (checked ? "var(--accent)" : "var(--border-strong)"),
+                              cursor: "pointer",
+                            }}>
+                            <span className="absolute top-0.5 left-0.5 w-5 h-5 rounded-full transition-transform"
+                                  style={{ background: "var(--paper)", transform: checked ? "translateX(16px)" : "translateX(0)" }} />
+                          </button>
+                          <span className="text-sm" style={{ color: checked ? "var(--ink)" : "var(--text-dim)" }}>
+                            {label}
+                          </span>
+                          <span className="hidden sm:inline text-xs" style={{ color: "var(--text-dim)", opacity: 0.8 }}>{tip}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Error */}
@@ -718,8 +741,8 @@ export default function HomePage() {
               {/* Submit + honest summary of what was chosen */}
               <div>
                 <p className="text-xs mb-3 text-center" style={{ color: "var(--text-dim)" }}>
-                  {selectedMedium?.label} · {SKILL_LEVELS.find(s => s.id === skillLevel)?.label} · {paletteSize} colours ·{" "}
-                  {valueZones} zones · opens at {selectedDetail?.label} · {["", "minimal", "simplified", "balanced", "detailed", "maximum"][regionComplexity]} regions
+                  {selectedMedium?.label} · {SKILL_LEVELS.find(s => s.id === skillLevel)?.label} ·{" "}
+                  {valueZones} value zones · opens at {selectedDetail?.label}
                 </p>
                 <button onClick={submit} disabled={!file || loading} className="btn-primary w-full" style={{ padding: "17px 28px" }}>
                   {loading ? "Uploading…" : "Generate my lesson →"}

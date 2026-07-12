@@ -698,6 +698,9 @@ def _build_manifest(
         "edge_maps":      edge_maps_rel,    # A4: individual sublayer maps
         "outline_composites": outline_composites_rel,
         "value_zones_map": value_zones_map,
+        # Per-level RGB-encoded region-id maps for viewer click-select.
+        "label_maps": {str(k): rel_to_outputs(p) for k, p in (hier.get("label_maps") or {}).items() if p},
+        "regions_json": rel_to_outputs(hier.get("regions_json")),
         "palette":        _palette_with_recipes(hier.get("palette", []), medium, brand_id),
         "colour_families":hier.get("colour_families", []),
         "value_zones":    hier.get("value_zone_list", []),

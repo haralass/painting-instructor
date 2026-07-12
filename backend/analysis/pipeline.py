@@ -73,6 +73,27 @@ def run_hierarchical_analysis(
     for z in zones:
         z.region_ids = [r.id for r in regions if r.value_zone == z.id]
 
+    # ── 3b. Persist per-level label maps (RGB-encoded region ids) ────────────
+    # The viewer resolves a click straight to a Region: pixel → id via
+    # id+1 = R + G·256 (0 = no region), then regions.json for the metadata.
+    # Lossless PNG; same pixel grid as every other analysis output (§21.D).
+    label_map_paths: dict[int, str] = {}
+    for lvl in range(1, 6):
+        lm = label_maps.get(f"l{lvl}")
+        if lm is None:
+            continue
+        lut = np.zeros(int(lm.max()) + 2, dtype=np.int32)  # 0 = background/none
+        for r in regions:
+            if r.scale == f"l{lvl}" and 0 <= r.source_label <= lm.max():
+                lut[r.source_label] = r.id + 1
+        ids = lut[np.clip(lm, 0, len(lut) - 1)]
+        rgb = np.zeros((*ids.shape, 3), dtype=np.uint8)
+        rgb[..., 0] = ids & 0xFF
+        rgb[..., 1] = (ids >> 8) & 0xFF
+        p = str(out_dir / f"level_{lvl}_labelmap.png")
+        Image.fromarray(rgb).save(p)
+        label_map_paths[lvl] = p
+
     # Assign colour family linked_region_ids
     for f in families:
         f.linked_region_ids = [r.id for r in regions if r.colour_family_id == f.id]
@@ -253,6 +274,7 @@ def run_hierarchical_analysis(
         "label_to_region_id":  label_to_region_id,
         "edge_maps":           _edge_map_paths,  # A4: individual maps for frontend sublayer toggles
         "outline_composites":  _outline_composite_paths,  # global composites for lesson_plan resolution
+        "label_maps":          label_map_paths,  # per-level RGB-encoded region ids (viewer click-select)
         "paint_by_numbers":    pbn_path,   # hierarchy-based page (replaces classic when both exist)
         "study_overlay":       study_path, # white region contours ON the reference (detail study)
         "smart_dot_to_dot":    dots_path,  # edge-hierarchy dots (replaces classic when both exist)

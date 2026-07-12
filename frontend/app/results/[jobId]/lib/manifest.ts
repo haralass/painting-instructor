@@ -82,6 +82,8 @@ export type Manifest = {
     edge_maps?: Record<string, string>;  // level-aware sublayers — NOT the same as the top-level edge_maps below
   }>;
   edge_maps?: Record<string, string>;  // global, non-level-filtered — "primary"|"secondary"|"decorative"|"texture" → rel path
+  label_maps?: Record<string, string>; // per-level RGB-encoded region-id maps (viewer click-select)
+  regions_json?: string;               // region hierarchy metadata for this job
   outline_composites?: Record<string, string>;  // global (non-level-filtered) outline composites
   palette: {
     id: number; name: string; base_rgb: [number,number,number]; area_fraction: number;

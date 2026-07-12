@@ -6,6 +6,7 @@ import { absUrl, outputUrl, LEVEL_LABELS, type CompareMode } from "./lib/manifes
 import { useJobPolling } from "./hooks/useJobPolling";
 import LoadingScreen from "./components/LoadingScreen";
 import ImageDisplay from "./components/ImageDisplay";
+import Viewer from "./components/Viewer";
 import LessonPlayer from "./components/LessonPlayer";
 import CritiquePanel from "./components/CritiquePanel";
 import SquintSimulator from "./components/SquintSimulator";
@@ -315,7 +316,23 @@ export default function ResultsPage() {
           )}
 
           {/* ── Main image display ──────────────────────────────────────── */}
-          <div className="p-4 flex-1">
+          <div className="p-4 flex-1 flex flex-col min-h-0">
+            {viewMode === "hierarchical_lesson" && compareMode === "analysis" ? (
+              /* Phase 2: the real workspace — zoom/pan/fit/100%/flip/minimap
+                 with aligned overlays and click-to-inspect regions resolved
+                 against the existing merge-tree hierarchy. */
+              <Viewer
+                referenceUrl={referenceUrl}
+                overlays={activeAssets}
+                opacity={opacity}
+                imageWidth={manifest?.image?.width}
+                imageHeight={manifest?.image?.height}
+                labelMapUrl={manifest?.label_maps?.[String(detailLevel)]
+                  ? outputUrl(manifest.label_maps[String(detailLevel)]) : undefined}
+                regionsUrl={outputUrl(manifest?.regions_json ?? `${jobId}/regions.json`)}
+                manifest={manifest}
+              />
+            ) : (
             <ImageDisplay
               compareMode={compareMode}
               analysisUrl={analysisUrl}
@@ -327,6 +344,7 @@ export default function ResultsPage() {
               title={viewMode === "classic_analysis" && selected ? selected.title : (LEVEL_LABELS[detailLevel] ?? currentLevelData?.label ?? "")}
               palette={manifest?.palette}
             />
+            )}
 
             {/* A2: Classic page WHY explanation — only in classic_analysis mode */}
             {viewMode === "classic_analysis" && selected && compareMode === "analysis" && (

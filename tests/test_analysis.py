@@ -1188,61 +1188,6 @@ class TestRegionComplexity:
 
 # ── A12: cKDTree chain_polylines performance ──────────────────────────────────
 
-class TestChainPolylines:
-    """A12: _chain_polylines with cKDTree must handle 1000 polylines in bounded time."""
-
-    def _make_polylines(self, n: int, rng) -> list[np.ndarray]:
-        """Generate n short polylines with random endpoints."""
-        polylines = []
-        for _ in range(n):
-            start = rng.uniform(0, 500, (2,))
-            end   = start + rng.uniform(-20, 20, (2,))
-            polylines.append(np.array([start, end]))
-        return polylines
-
-    def test_chain_1000_polylines_under_1_second(self):
-        from backend.pipeline.dot_to_dot.processor import _chain_polylines
-        import time
-        rng = np.random.default_rng(42)
-        polys = self._make_polylines(1000, rng)
-        t0 = time.perf_counter()
-        result = _chain_polylines(polys)
-        elapsed = time.perf_counter() - t0
-        assert elapsed < 1.0, f"_chain_polylines(1000) took {elapsed:.3f}s — expected <1s"
-        assert len(result) >= 2, "chain result should have points"
-
-    def test_chain_empty_returns_empty(self):
-        from backend.pipeline.dot_to_dot.processor import _chain_polylines
-        result = _chain_polylines([])
-        assert result.shape == (0, 2)
-
-    def test_chain_single_polyline_returns_it(self):
-        from backend.pipeline.dot_to_dot.processor import _chain_polylines
-        poly = np.array([[0.0, 0.0], [1.0, 1.0], [2.0, 0.0]])
-        result = _chain_polylines([poly])
-        np.testing.assert_array_equal(result, poly)
-
-    def test_chain_visits_all_polylines(self):
-        """All polyline points should appear in the chained output (may be reversed)."""
-        from backend.pipeline.dot_to_dot.processor import _chain_polylines
-        rng = np.random.default_rng(7)
-        polys = self._make_polylines(10, rng)
-        result = _chain_polylines(polys)
-        total_pts = sum(len(p) for p in polys)
-        assert len(result) == total_pts, (
-            f"Expected {total_pts} points in chain, got {len(result)}"
-        )
-
-    def test_chain_100_polylines_deterministic(self):
-        """Same input must produce same output (no random tie-breaking)."""
-        from backend.pipeline.dot_to_dot.processor import _chain_polylines
-        rng = np.random.default_rng(55)
-        polys = self._make_polylines(100, rng)
-        r1 = _chain_polylines([p.copy() for p in polys])
-        r2 = _chain_polylines([p.copy() for p in polys])
-        np.testing.assert_array_equal(r1, r2, err_msg="chain result is non-deterministic")
-
-
 # ── A13: Edge budget enforcement ──────────────────────────────────────────────
 
 class TestEdgeBudgets:

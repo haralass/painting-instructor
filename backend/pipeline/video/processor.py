@@ -113,7 +113,7 @@ def generate(
         reference:      Original photo (used as first frame + final comparison).
         line_art:       Black-lines-on-white composite (from line_art processor).
         notan:          3-zone notan (from artist_breakdown.notan).
-        color_blocking: Paint-by-number result (from color_by_number processor).
+        color_blocking: Paint-by-number result (the hierarchy-based render).
         output_path:    Destination .mp4 path.
         fps:            Frames per second (default 24).
         out_w:          Output video width in pixels (height maintains aspect).

@@ -51,18 +51,20 @@ def run_pipeline(
 
     Steps:
       1. loading          — open & resize image
-      2-7. (concurrent, independent of each other):
+      2-6. (concurrent, independent of each other):
          line_art         — 3-layer composite + fg_mask
          notan            — adaptive value study
          color_temperature— LAB b* warm/cool map (fixed channel)
          color_palette    — K-means++ dominant colour chart
          light_direction  — Sobel histogram + 5-zone overlay
-         color_by_number  — bilateral+RAG paint-by-numbers
-      8. dot_to_dot       — skeleton arc-length numbered dots (needs line_art's result)
-      9. hierarchical     — multi-scale region hierarchy + edge classification
-     10. video            — progressive tutorial animation
-     11. pdf              — A4 book of all pages that succeeded
-     12. manifest         — manifest.json describing all outputs
+      7. hierarchical     — multi-scale region hierarchy + edge classification;
+                            also renders paint-by-numbers and the smart
+                            dot-to-dot (the classic standalone generators for
+                            both were retired — see MIGRATIONS in
+                            backend/capabilities.py)
+      8. video            — progressive tutorial animation
+      9. pdf              — A4 book of all pages that succeeded
+     10. manifest         — manifest.json describing all outputs
     """
     import numpy as np
     from PIL import Image
@@ -72,8 +74,6 @@ def run_pipeline(
     from ..pipeline.artist_breakdown.processor import (
         notan, color_palette, color_temperature, light_direction_with_angle
     )
-    from ..pipeline.color_by_number.processor import process as color_by_number
-    from ..pipeline.dot_to_dot.processor import process as dot_to_dot
     from ..analysis.subject import subject_mask as compute_subject_mask
     from ..analysis.depth import depth_planes as compute_depth_planes
     from ..analysis.albedo_shading import local_vs_light_page
@@ -176,7 +176,6 @@ def run_pipeline(
         "color_temperature": lambda: color_temperature(img),
         "color_palette":     lambda: color_palette(img, n_colors=palette_size),
         "light_direction":   lambda: light_direction_with_angle(img),
-        "color_by_number":   lambda: color_by_number(img, n_colors=palette_size),
     }
     parallel_results: dict[str, object] = {}
     with ThreadPoolExecutor(max_workers=len(parallel_jobs)) as executor:
@@ -278,23 +277,7 @@ def run_pipeline(
         light_img, light_angle = r
         pages.append(save("light_direction", light_img))
 
-    # Perf: O(P×E) full-image mask comparisons have been eliminated via per-label
-    # LUT precomputation in color_by_number/processor.py.
-    cbn_result = parallel_results.get("color_by_number")
-    if cbn_result:
-        pages.append(save("color_by_number", cbn_result))
-    log.info("color_by_number timing: %.2fs", timings.get("color_by_number", 0.0))
-
-    # ── Step 8: Dot to dot (reuses line art — no second edge detection) ───────
-    r = run("dot_to_dot", lambda: dot_to_dot(
-        img, n_dots=500,
-        line_art_img=la_result,
-        fg_mask=fg_mask,
-    ))
-    if r:
-        pages.append(save("dot_to_dot", r))
-
-    # ── Step 9: Hierarchical analysis (new architecture) — CRITICAL ──────────
+    # ── Step 7: Hierarchical analysis (new architecture) — CRITICAL ──────────
     CRITICAL_STEPS = {"loading", "hierarchical"}
     try:
         from ..analysis.pipeline import run_hierarchical_analysis
@@ -328,15 +311,25 @@ def run_pipeline(
         raise RuntimeError(f"Critical hierarchical analysis failed:\n{tb}")
     hier = hier or {}
 
-    # Hierarchy-based paint-by-numbers replaces the classic page; if the
-    # classic step failed (no ML deps) it was never in `pages`, so add it.
+    # Paint-by-numbers and the dot-to-dot exercise come from the SAME region
+    # hierarchy the lesson teaches (the classic standalone generators were
+    # retired — one segmentation everywhere keeps the guides consistent).
     pbn_path = hier.get("paint_by_numbers")
-    if pbn_path and not any(Path(p).name == "color_by_number.png" for p in pages):
+    if pbn_path:
         pages.append(pbn_path)
     if hier.get("study_overlay"):
         pages.append(hier["study_overlay"])
-    if hier.get("smart_dot_to_dot") and not any(Path(p).name == "dot_to_dot.png" for p in pages):
+    if hier.get("smart_dot_to_dot"):
         pages.append(hier["smart_dot_to_dot"])
+
+    # Colour-blocking image for the tutorial video, loaded from the
+    # hierarchy-based paint-by-numbers render.
+    cbn_result = None
+    if pbn_path and Path(pbn_path).exists():
+        try:
+            cbn_result = Image.open(pbn_path).convert("RGB")
+        except Exception:
+            log.warning("could not open paint-by-numbers page for the video", exc_info=True)
 
     # ── Step 9a: Image brief — the personal part of the lesson. Deterministic,
     #    derived entirely from this job's own analysis data: which masses to

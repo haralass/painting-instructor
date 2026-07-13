@@ -390,6 +390,19 @@ def list_projects(limit: int = 20):
     return project_store.list_projects(limit=min(max(limit, 1), 100))
 
 
+@app.get("/projects/by-job/{job_id}")
+def get_project_by_job(job_id: str):
+    """Resolve the project for a job (the workspace knows the job id, not the
+    project id) so the lesson player can read/write progress + checkpoints."""
+    from ..projects import store as project_store
+    project = project_store.get_project_by_job(job_id)
+    if project is None:
+        raise HTTPException(404, "No project for this job")
+    project["lesson_progress"] = project_store.get_lesson_progress(project["id"])
+    project["checkpoints"]     = project_store.get_checkpoints(project["id"])
+    return project
+
+
 @app.get("/projects/{project_id}")
 def get_project(project_id: str):
     from ..projects import store as project_store

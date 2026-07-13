@@ -114,6 +114,12 @@ def test_endpoints_roundtrip(store, client):
 
     assert client.get("/projects/does-not-exist").status_code == 404
 
+    # by-job resolution (the lesson player knows the job id, not the project id)
+    byjob = client.get("/projects/by-job/job-api")
+    assert byjob.status_code == 200 and byjob.json()["id"] == p["id"]
+    assert "lesson_progress" in byjob.json() and "checkpoints" in byjob.json()
+    assert client.get("/projects/by-job/no-such-job").status_code == 404
+
 
 # ── Resume path: finished jobs must open without the broker ──────────────────
 

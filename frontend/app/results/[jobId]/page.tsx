@@ -8,6 +8,7 @@ import LoadingScreen from "./components/LoadingScreen";
 import ImageDisplay from "./components/ImageDisplay";
 import Viewer from "./components/Viewer";
 import LessonPlayer from "./components/LessonPlayer";
+import GuidedLessonPlayer from "./components/GuidedLessonPlayer";
 import CritiquePanel from "./components/CritiquePanel";
 import SquintSimulator from "./components/SquintSimulator";
 import ConstructionView from "./components/ConstructionView";
@@ -192,7 +193,7 @@ export default function ResultsPage() {
           {/* View mode switcher */}
           <div className="flex flex-col gap-1 mb-3">
             {([
-              ["lesson",              "Lesson",          Boolean(manifest?.lesson_plan?.length)],
+              ["lesson",              "Lesson",          Boolean(manifest?.lesson?.steps?.length || manifest?.lesson_plan?.length)],
               ["construction",        "Construction",    Boolean(manifest?.drawing_json)],
               ["hierarchical_lesson", "Explore Layers",  true],
               ["build_up",            "Build up",        Boolean(manifest?.detail_levels && Object.keys(manifest.detail_levels).length > 0)],
@@ -287,6 +288,15 @@ export default function ResultsPage() {
               manifest={manifest}
               referenceUrl={referenceUrl}
             />
+          ) : viewMode === "lesson" && manifest?.lesson?.steps?.length ? (
+            <div className="flex-1 flex flex-col min-h-0 p-4">
+              <GuidedLessonPlayer
+                jobId={jobId}
+                referenceUrl={referenceUrl}
+                manifest={manifest}
+                onOpenCritique={() => setUIViewMode("critique")}
+              />
+            </div>
           ) : viewMode === "lesson" && manifest?.lesson_plan && manifest.lesson_plan.length > 0 ? (
             <LessonPlayer
               manifest={manifest}

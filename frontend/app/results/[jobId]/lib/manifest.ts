@@ -32,6 +32,25 @@ export const OUTLINE_SUBLAYER_LABELS: Record<string, string> = {
 
 export type CompareMode = "analysis" | "reference" | "side_by_side" | "overlay" | "split";
 
+// ── Phase 4: structured lesson (mirrors backend/schemas/lesson.py) ──
+export type LessonOverlay = { kind: string; asset?: string | null; region_ids: number[]; opacity?: number };
+export type LessonCompletion = { kind: "confirm" | "upload" | "trace"; criteria: string };
+export type LessonStepV2 = {
+  id: string; capability_id: string; phase: string; order: number;
+  title: string; objective: string; explanation: string; action: string;
+  overlays: LessonOverlay[]; tool?: string | null; mixture?: string | null;
+  completion_check?: LessonCompletion | null; common_mistake?: string | null;
+  stop_condition?: string | null; checkpoint_id?: string | null; depends_on: string[];
+};
+export type LessonCheckpoint = {
+  id: string; type: string; title: string; instructions: string;
+  required: boolean; accepts: string[];
+};
+export type LessonV2 = {
+  id: string; capability_id: string; medium: string; guidance: string;
+  steps: LessonStepV2[]; checkpoints: LessonCheckpoint[];
+};
+
 // ── Phase 3: structured drawing construction (mirrors backend/schemas/drawing.py) ──
 export type Pt = [number, number];
 export type EdgeCause = {
@@ -132,6 +151,7 @@ export type Manifest = {
   label_maps?: Record<string, string>; // per-level RGB-encoded region-id maps (viewer click-select)
   regions_json?: string;               // region hierarchy metadata for this job
   drawing_json?: string;               // Phase 3 structured drawing construction
+  lesson?: LessonV2 | null;            // Phase 4 structured composition-first lesson
   outline_composites?: Record<string, string>;  // global (non-level-filtered) outline composites
   palette: {
     id: number; name: string; base_rgb: [number,number,number]; area_fraction: number;

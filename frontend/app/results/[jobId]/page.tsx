@@ -2,7 +2,7 @@
 import { useState, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { absUrl, outputUrl, LEVEL_LABELS, type CompareMode } from "./lib/manifest";
+import { API, absUrl, outputUrl, LEVEL_LABELS, type CompareMode, type LocalAnalysis } from "./lib/manifest";
 import { useJobPolling } from "./hooks/useJobPolling";
 import LoadingScreen from "./components/LoadingScreen";
 import ImageDisplay from "./components/ImageDisplay";
@@ -64,6 +64,38 @@ export default function ResultsPage() {
   }
 
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  // Phase 2 leftover: rectangle region selection + "Analyse this area".
+  // The Viewer owns the drag-to-select rectangle; this page owns the actual
+  // network call and the small result panel that shows what came back.
+  const [localAnalysis, setLocalAnalysis]           = useState<LocalAnalysis | null>(null);
+  const [localAnalysisError, setLocalAnalysisError] = useState<string | null>(null);
+  const [analyzingArea, setAnalyzingArea]            = useState(false);
+
+  async function handleSelectArea(bbox: { x: number; y: number; w: number; h: number }) {
+    setAnalyzingArea(true);
+    setLocalAnalysisError(null);
+    try {
+      const res = await fetch(`${API}/jobs/${jobId}/local-analysis`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(bbox),
+      });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => null);
+        throw new Error(detail?.detail ?? `Local analysis failed (${res.status})`);
+      }
+      setLocalAnalysis(await res.json() as LocalAnalysis);
+    } catch (err) {
+      setLocalAnalysisError(err instanceof Error ? err.message : "Local analysis failed");
+    } finally {
+      setAnalyzingArea(false);
+    }
+  }
+  function clearLocalAnalysis() {
+    setLocalAnalysis(null);
+    setLocalAnalysisError(null);
+  }
 
   // ── Loading / Error states ─────────────────────────────────────────────────
   // A3: show results layout if analysis_ready even while video/PDF still processing
@@ -376,6 +408,9 @@ export default function ResultsPage() {
                     ? outputUrl(manifest.label_maps[String(detailLevel)]) : undefined}
                   regionsUrl={outputUrl(manifest?.regions_json ?? `${jobId}/regions.json`)}
                   manifest={manifest}
+                  onSelectArea={handleSelectArea}
+                  onClearArea={clearLocalAnalysis}
+                  analyzingArea={analyzingArea}
                 />
               )
             ) : (
@@ -390,6 +425,41 @@ export default function ResultsPage() {
               title={viewMode === "classic_analysis" && selected ? selected.title : (LEVEL_LABELS[detailLevel] ?? currentLevelData?.label ?? "")}
               palette={manifest?.palette}
             />
+            )}
+
+            {/* "Analyse this area" result — a closer, real local re-analysis of
+                the rectangle the student dragged on the viewer, cropped from
+                the full-resolution reference (never the preview). */}
+            {viewMode === "hierarchical_lesson" && (localAnalysis || localAnalysisError) && (
+              <div className="mt-3 p-3 rounded-xl flex gap-3 items-start"
+                   style={{ border: "1px solid var(--border)", background: "var(--surface)" }}>
+                {localAnalysisError ? (
+                  <p className="text-sm flex-1" style={{ color: "var(--text-dim)" }}>
+                    Local analysis failed: {localAnalysisError}
+                  </p>
+                ) : localAnalysis && (
+                  <>
+                    <img
+                      src={outputUrl(localAnalysis.assets.outlines ?? localAnalysis.assets.colours ?? undefined)}
+                      alt="Close-up analysis of the selected area"
+                      className="rounded-lg flex-shrink-0"
+                      style={{ width: 160, height: "auto", border: "1px solid var(--border)", background: "var(--paper)" }}
+                    />
+                    <div className="flex-1 text-xs">
+                      <p className="font-medium mb-1" style={{ color: "var(--ink)" }}>
+                        Analysed area — {Math.round(localAnalysis.bbox.w)}×{Math.round(localAnalysis.bbox.h)}px
+                      </p>
+                      <p style={{ color: "var(--text-dim)" }}>
+                        A closer look at just this region, worked out the same way as the
+                        full lesson — outlines, values and colour masses, scaled up for detail.
+                      </p>
+                    </div>
+                  </>
+                )}
+                <button onClick={clearLocalAnalysis} title="Clear"
+                        style={{ background: "none", border: "none", cursor: "pointer",
+                                 color: "var(--text-dim)", flexShrink: 0 }}>✕</button>
+              </div>
             )}
 
             {/* A2: Classic page WHY explanation — only in classic_analysis mode */}

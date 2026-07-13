@@ -510,6 +510,33 @@ def get_medium_config(medium: str):
     return _get_medium_cfg(medium)
 
 
+# ── POST /jobs/{job_id}/local-analysis ────────────────────────────────────────
+# Phase 2 leftover: rectangle region selection + "Analyse this area". Crops
+# ONLY from the untouched outputs/{job_id}/reference.* file (never a preview
+# or generated overlay) and runs the same hierarchical analysis the
+# whole-image lesson uses, scoped to that crop. See backend/analysis/local.py.
+class _LocalAnalysisBBox(_BaseModel):
+    x: float
+    y: float
+    w: float
+    h: float
+
+
+@app.post("/jobs/{job_id}/local-analysis")
+def local_analysis(job_id: str, body: _LocalAnalysisBBox):
+    """Run a local, zoomed-in analysis over a student-selected rectangle
+    (ORIGINAL image px). Returns asset paths plus the offset/scale needed to
+    map the local result's pixels back onto the parent image."""
+    from ..analysis.local import run_local_analysis, LocalAnalysisError
+
+    try:
+        return run_local_analysis(job_id, body.model_dump())
+    except FileNotFoundError:
+        raise HTTPException(404, "Reference image not found — has the job finished analysing?")
+    except LocalAnalysisError as exc:
+        raise HTTPException(422, str(exc))
+
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 def _path_to_url(path: str | None, job_id: str) -> str | None:
     if not path:

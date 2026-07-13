@@ -1,5 +1,17 @@
 # Phase 4 — Implementation Note (Lesson Engine)
 
+> **STATUS (2026-07-13): COMPLETE.** Shipped on `feature/phase1-foundations`
+> (commits `5f6921a…f74da39`); 287 backend + 13 frontend tests green,
+> `next build` clean, live-verified. `teaching/lesson_engine.py` generates
+> the composition-first `Lesson` (manifest.lesson + lesson.json); the new
+> `GuidedLessonPlayer` plays it with construction/asset overlays on the
+> Phase-2 viewer, checkpoint gates, and per-step progress persisted via the
+> project store (new `GET /projects/by-job/{job_id}`). Registry declares
+> lesson mode on the 8 taught capabilities. Verified: 24-step lesson,
+> drawing checkpoint before values, marking steps persists to the backend.
+> Deferred: the actual upload-critique alignment against the drawing/values
+> is Phase 6; user landmark editing and local-crop child lessons remain open.
+
 Turns the Phase-3 drawing analysis + the existing value/colour/edge/brief
 signals into a real, generated `Lesson` (the Phase-1 `schemas/lesson.py`
 contract): a composition-first sequence with a drawing checkpoint before

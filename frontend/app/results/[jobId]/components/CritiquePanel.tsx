@@ -17,14 +17,34 @@ type PainterProfile = {
   weaknesses: ProfileWeakness[];
 };
 
+// One prioritised correction — the single most important thing to fix next.
+type Correction = {
+  component: string;
+  severity: number;
+  message: string;
+  structure_checked?: boolean;
+};
+
 type CritiqueResult = {
   scores: { overall: number; values: number; colour: number; structure: number };
   feedback: { kind: string; area: string; message: string; tip: string; severity: number }[];
   first_fix: string;
+  priority?: Correction;
+  secondary?: Correction[];
   assets: { overlay: string; side_by_side: string };
   attempt: number;
   attempt_image?: string;
   profile?: PainterProfile;
+};
+
+// Plain-language label for a correction's component (no CV jargon).
+const COMPONENT_LABELS: Record<string, string> = {
+  placement:  "Placement",
+  proportion: "Proportion",
+  value:      "Value",
+  colour:     "Colour",
+  edges:      "Edges",
+  overall:    "Overall",
 };
 
 const METRIC_LABELS: Record<string, string> = {
@@ -129,12 +149,46 @@ export default function CritiquePanel({ jobId, referenceUrl }: { jobId: string; 
             ))}
           </div>
 
-          {/* First fix */}
+          {/* Fix this first — the ONE prioritised correction */}
           <div className="rounded-xl p-4" style={{ background: "rgba(180,81,31,0.07)", border: "1px solid rgba(180,81,31,0.28)" }}>
-            <p className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: "var(--accent)" }}>
-              Fix this first
+            <div className="flex items-center gap-2 mb-1">
+              <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: "var(--accent)" }}>
+                Fix this first
+              </p>
+              {result.priority && result.priority.component !== "overall" && (
+                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
+                      style={{ background: "rgba(180,81,31,0.12)", color: "var(--accent)", border: "1px solid rgba(180,81,31,0.3)" }}>
+                  {COMPONENT_LABELS[result.priority.component] ?? result.priority.component}
+                </span>
+              )}
+            </div>
+            <p className="text-sm leading-relaxed" style={{ color: "var(--text)" }}>
+              {result.priority?.message ?? result.first_fix}
             </p>
-            <p className="text-sm leading-relaxed" style={{ color: "var(--text)" }}>{result.first_fix}</p>
+
+            {/* Remaining corrections, ordered and collapsed by default */}
+            {result.secondary && result.secondary.length > 0 && (
+              <details className="mt-3 group">
+                <summary className="text-xs font-medium cursor-pointer select-none" style={{ color: "var(--accent)" }}>
+                  Then work on {result.secondary.length} more, in order
+                </summary>
+                <ol className="mt-2 space-y-2 list-none">
+                  {result.secondary.map((c, i) => (
+                    <li key={i} className="flex gap-2.5 items-start">
+                      <span className="flex-shrink-0 mt-0.5 text-[10px] font-bold w-4 text-right" style={{ color: "var(--text-dim)" }}>
+                        {i + 1}.
+                      </span>
+                      <span className="min-w-0">
+                        <span className="text-[10px] font-bold uppercase tracking-wider mr-2" style={{ color: "var(--accent)" }}>
+                          {COMPONENT_LABELS[c.component] ?? c.component}
+                        </span>
+                        <span className="text-sm" style={{ color: "var(--text)" }}>{c.message}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              </details>
+            )}
           </div>
 
           {/* Overlay + reference */}

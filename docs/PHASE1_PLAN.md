@@ -14,12 +14,19 @@
 > live opacity) and region click-select against the existing merge tree via
 > new per-level RGB-encoded label maps + regions.json (verified live:
 > click → region → value family / colour family / area / parent mass).
-> Remaining Phase 2: rectangle/polygon/lasso selection + selection
-> refinement, "analyse this area" local re-analysis of the full-res crop,
-> before/after slider + synchronized compare inside the viewer, SVG (vector)
-> overlays replacing PNG overlays where feasible, and region hover
-> highlight. Known dev-only noise: StrictMode's first-mount teardown logs an
-> OSD drawer assert.
+> **PHASE 2 CONTINUED (commit `d6840f1`).** Shipped: single coordinate
+> module `app/lib/imageCoords.ts` (+13 vitest round-trip tests, `npm test`);
+> full control row + keyboard shortcuts (+ − 0 1 F H Esc); region hover
+> highlight + click/Shift-click multi-selection with mask overlays in image
+> coordinates; hierarchy breadcrumb with clickable parent/children; view
+> modes Reference / Overlay / Before-After split / synced Side-by-Side on
+> one shared viewer; viewport persisted per project; OSD container-leak fix.
+> Remaining Phase 2: rectangle/polygon/lasso free selection + refinement,
+> "analyse this area" local re-analysis of the full-res crop (backend
+> endpoint + child-project mounting), SVG vector overlays where PNG masks
+> fall short, restoring compare mode from project state (currently
+> localStorage viewport only). Known dev-only noise: StrictMode's
+> first-mount teardown logs an OSD drawer assert.
 
 Companion to `REDESIGN_AUDIT.md`. Brief by design; the audit holds the rationale.
 

@@ -303,6 +303,16 @@ async def critique_job(job_id: str, file: UploadFile, user_id: str | None = Form
 
     from ..critique.engine import critique_attempt, save_critique
 
+    # Drawing analysis (subject bounds / silhouette) for the structural
+    # comparison, if this job produced one. Missing/unreadable is fine.
+    drawing = None
+    drawing_path = job_out / "drawing.json"
+    if drawing_path.exists():
+        try:
+            drawing = json.loads(drawing_path.read_text())
+        except Exception:
+            drawing = None
+
     try:
         result = critique_attempt(
             reference_path=reference,
@@ -310,6 +320,7 @@ async def critique_job(job_id: str, file: UploadFile, user_id: str | None = Form
             out_dir=attempt_dir,
             n_value_bands=n_bands,
             medium=medium,
+            drawing=drawing,
         )
     except Exception as exc:
         raise HTTPException(500, f"Critique failed: {exc}")

@@ -345,6 +345,7 @@ def critique_attempt(
     n_value_bands: int = 5,
     medium: str = "oil",
     edges_path: str | Path | None = None,
+    drawing: dict | None = None,
 ) -> dict:
     """
     Compare a student attempt against the reference and write:
@@ -356,6 +357,20 @@ def critique_attempt(
     t0 = time.perf_counter()
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Drawing analysis (subject bounds / silhouette) for structural comparison.
+    # The API passes it explicitly; when it doesn't, try to locate it next to
+    # the job outputs (works for both the real critique/attempt_N layout and the
+    # flat test layout).
+    if drawing is None:
+        for cand in (out_dir.parent / "drawing.json",
+                     out_dir.parent.parent / "drawing.json"):
+            if cand.exists():
+                try:
+                    drawing = json.loads(cand.read_text())
+                except Exception:
+                    drawing = None
+                break
 
     ref = _load_rgb(reference_path)
     h, w = ref.shape[:2]
@@ -503,6 +518,24 @@ def critique_attempt(
     _KIND_PRIORITY = {"value": 0, "structure": 1, "temperature": 2, "saturation": 3}
     feedback.sort(key=lambda f: (_KIND_PRIORITY.get(f["kind"], 9), -f["severity"]))
 
+    # ── 5. Prioritised correction — ONE thing to fix first, then the rest ────
+    #   Components are compared independently (placement/proportion → value →
+    #   colour → edges). Structural findings only win when the alignment is
+    #   confident enough to trust the geometry.
+    from .priority import build_priority
+    priority, secondary = build_priority(
+        ref_rgb=ref,
+        att_rgb=att,
+        ref_gray=ref_gray,
+        ref_bands=ref_bands,
+        att_bands=att_bands,
+        alignment_confidence=alignment_confidence,
+        value_score=value_score,
+        colour_score=colour_score,
+        errors=errors,
+        drawing=drawing,
+    )
+
     # ── Visual outputs ───────────────────────────────────────────────────────
     overlay_path = out_dir / "critique_overlay.png"
     _write_overlay(att, np.abs(band_diff) / max(n_value_bands - 1, 1), feedback, overlay_path)
@@ -519,8 +552,9 @@ def critique_attempt(
             "structure": round(structure_score, 1),
         },
         "feedback": feedback,
-        "first_fix": feedback[0]["message"] if feedback else
-                     "Values, colour and structure all track the reference well — push the focal point further.",
+        "priority": priority,
+        "secondary": secondary,
+        "first_fix": priority["message"],
         "assets": {
             "overlay":      str(overlay_path),
             "side_by_side": str(side_path),

@@ -221,6 +221,7 @@ def run_hierarchical_analysis(
     # account of how the drawing is built (bounds → landmarks → envelope →
     # silhouette → internal structure), in a pedagogical order. Never fatal.
     drawing_path: str | None = None
+    drawing_dict: dict | None = None
     try:
         from .drawing import build_drawing_analysis
         from .edge_cause import attach_edge_causes
@@ -235,7 +236,9 @@ def run_hierarchical_analysis(
         }
         drawing_path = str(out_dir / "drawing.json")
         Path(drawing_path).write_text(drawing.model_dump_json(indent=2))
+        drawing_dict = drawing.model_dump()
     except Exception:
+        drawing_dict = None
         log.warning("drawing construction analysis failed", exc_info=True)
 
     # ── 6. Write regions JSON ─────────────────────────────────────────────────
@@ -301,6 +304,7 @@ def run_hierarchical_analysis(
         "outline_composites":  _outline_composite_paths,  # global composites for lesson_plan resolution
         "label_maps":          label_map_paths,  # per-level RGB-encoded region ids (viewer click-select)
         "drawing_json":        drawing_path,     # Phase 3 structured drawing construction
+        "drawing":             drawing_dict,     # in-process dict for the Phase-4 lesson engine
         "paint_by_numbers":    pbn_path,   # hierarchy-based page (replaces classic when both exist)
         "study_overlay":       study_path, # white region contours ON the reference (detail study)
         "smart_dot_to_dot":    dots_path,  # edge-hierarchy dots (replaces classic when both exist)

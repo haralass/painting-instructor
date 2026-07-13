@@ -373,6 +373,19 @@ CAPABILITIES: list[Capability] = [
 
 CAPABILITY_BY_ID: dict[str, Capability] = {c.id: c for c in CAPABILITIES}
 
+# ── Lesson-mode wiring (Phase 4) ──────────────────────────────────────────────
+# The composition-first lesson engine (teaching/lesson_engine.py) now teaches
+# these capabilities step by step, so their `lesson` mode is honest. Kept as a
+# single authoritative set here so the registry claim and the engine cannot
+# drift (tests/test_capabilities.py asserts every lesson-mode capability is in
+# this set, and the engine only emits steps for these ids).
+LESSON_TAUGHT_CAPABILITIES: set[str] = {
+    "lesson_plan", "drawing_construction", "composition", "notan",
+    "color_palette", "color_by_number", "color_temperature", "edge_coach",
+}
+for _cid in LESSON_TAUGHT_CAPABILITIES:
+    CAPABILITY_BY_ID[_cid].modes.lesson = True
+
 
 # ── Migration map (Phase-1 adjustment #5) ─────────────────────────────────────
 # Old persisted/board identifiers → their current home. Filenames on disk

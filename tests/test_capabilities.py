@@ -96,14 +96,33 @@ def test_payload_shape():
 
 
 def test_modes_reflect_reality_no_overpromising():
-    """Phase 1: no capability may claim lesson/check modes that are not
-    actually implemented yet. Only the medium lesson plan has a lesson
-    surface and only the critique has a check surface today."""
+    """No capability may claim a lesson/check mode that isn't implemented.
+    Lesson mode is limited to the capabilities the Phase-4 engine actually
+    teaches; check mode is still only the critique."""
+    from backend.capabilities import LESSON_TAUGHT_CAPABILITIES
     for c in CAPABILITIES:
         if c.modes.lesson:
-            assert c.id == "lesson_plan", f"{c.id} claims an unimplemented lesson mode"
+            assert c.id in LESSON_TAUGHT_CAPABILITIES, f"{c.id} claims an unimplemented lesson mode"
         if c.modes.check:
             assert c.id == "critique", f"{c.id} claims an unimplemented check mode"
+
+
+def test_lesson_engine_only_teaches_registered_capabilities():
+    """Every capability_id the lesson engine emits must be a real capability
+    with lesson mode declared — the registry and engine cannot drift."""
+    from backend.capabilities import LESSON_TAUGHT_CAPABILITIES, CAPABILITY_BY_ID
+    from backend.teaching.lesson_engine import generate_lesson
+    lesson = generate_lesson(
+        drawing={"canvas_ratio": 0.75, "subject_bounds": {"margins": {}}, "landmarks": []},
+        value_zones=[{"label": "shadow"}, {"label": "light"}],
+        palette=[{"name": "Ultramarine"}], image_brief={"masses": [{"colour_name": "blue"}]},
+        medium="oil", guidance="full",
+    )
+    step_caps = {s.capability_id for s in lesson.steps}
+    for cid in step_caps:
+        assert cid in CAPABILITY_BY_ID, f"lesson step references unknown capability {cid}"
+    # capabilities the engine teaches (minus critique, which is check not lesson)
+    assert step_caps - {"critique"} <= LESSON_TAUGHT_CAPABILITIES
 
 
 def test_tasks_progress_derived_from_registry():

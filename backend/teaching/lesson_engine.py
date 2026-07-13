@@ -470,6 +470,6 @@ def generate_lesson(
     )
 
     return Lesson(
-        id="lesson_v2", capability_id="guided_lesson", medium=medium,
+        id="lesson_v2", capability_id="lesson_plan", medium=medium,
         guidance=guidance, steps=b.steps, checkpoints=b.checkpoints,
     )

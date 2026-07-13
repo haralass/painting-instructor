@@ -54,7 +54,7 @@ export const CAPABILITIES: CapabilityCard[] = [
     "workspace": true,
     "modes": {
       "study": true,
-      "lesson": false,
+      "lesson": true,
       "check": false
     },
     "supports": {
@@ -75,7 +75,7 @@ export const CAPABILITIES: CapabilityCard[] = [
     "workspace": true,
     "modes": {
       "study": true,
-      "lesson": false,
+      "lesson": true,
       "check": false
     },
     "supports": {
@@ -96,7 +96,7 @@ export const CAPABILITIES: CapabilityCard[] = [
     "workspace": true,
     "modes": {
       "study": true,
-      "lesson": false,
+      "lesson": true,
       "check": false
     },
     "supports": {
@@ -138,7 +138,7 @@ export const CAPABILITIES: CapabilityCard[] = [
     "workspace": true,
     "modes": {
       "study": true,
-      "lesson": false,
+      "lesson": true,
       "check": false
     },
     "supports": {
@@ -264,7 +264,7 @@ export const CAPABILITIES: CapabilityCard[] = [
     "workspace": true,
     "modes": {
       "study": true,
-      "lesson": false,
+      "lesson": true,
       "check": false
     },
     "supports": {
@@ -285,7 +285,7 @@ export const CAPABILITIES: CapabilityCard[] = [
     "workspace": true,
     "modes": {
       "study": true,
-      "lesson": false,
+      "lesson": true,
       "check": false
     },
     "supports": {
@@ -369,7 +369,7 @@ export const CAPABILITIES: CapabilityCard[] = [
     "workspace": false,
     "modes": {
       "study": true,
-      "lesson": false,
+      "lesson": true,
       "check": false
     },
     "supports": {

@@ -399,6 +399,35 @@ def run_pipeline(
         lesson_plan_abs = attach_image_notes(lesson_plan_abs, image_brief, medium)
     lesson_plan_rel = _relativize_lesson_plan(lesson_plan_abs)
 
+    # ── Structured composition-first lesson (Phase 4) ─────────────────────────
+    # The new Lesson (schemas/lesson.py) generated from the Phase-3 drawing
+    # construction + this job's value/colour/edge/brief signals. Never fatal —
+    # the legacy medium-stage lesson_plan above still drives the old player.
+    structured_lesson: dict | None = None
+    try:
+        from ..teaching.lesson_engine import generate_lesson, SKILL_TO_GUIDANCE
+        _dl3 = hier.get("detail_levels", {}).get("3", {})
+        lesson_assets = {
+            "value_zones_map": rel_to_outputs(hier.get("value_zones_path")),
+            "colours":         rel_to_outputs(_dl3.get("colours")),
+            "edges":           rel_to_outputs(hier.get("edges_svg")),
+        }
+        lesson_obj = generate_lesson(
+            drawing=hier.get("drawing"),
+            value_zones=hier.get("value_zone_list", []),
+            palette=hier.get("palette", []),
+            image_brief=image_brief,
+            medium=medium,
+            guidance=SKILL_TO_GUIDANCE.get(skill_level, "balanced"),
+            assets=lesson_assets,
+        )
+        structured_lesson = lesson_obj.model_dump()
+        (out_dir / "lesson.json").write_text(lesson_obj.model_dump_json(indent=2))
+    except Exception:
+        tb = traceback.format_exc()
+        errors["lesson_engine"] = tb
+        log.warning("structured lesson generation failed:\n%s", tb)
+
     # Write preliminary manifest immediately after hierarchical succeeds
     manifest_path = out_dir / "manifest.json"
     progress("analysis_ready")
@@ -423,6 +452,7 @@ def run_pipeline(
         brand_id=brand_id,
         image_brief=image_brief,
         lesson_plan=lesson_plan_rel,
+        structured_lesson=structured_lesson,
     )
     prelim_manifest["status"] = "analysis_ready"
     manifest_path.write_text(json.dumps(prelim_manifest, indent=2))
@@ -532,6 +562,7 @@ def run_pipeline(
         video_chapters=video_chapters,
         personal_observations=personal_observations,
         lesson_plan=lesson_plan_rel,
+        structured_lesson=structured_lesson,
     )
     manifest_path.write_text(json.dumps(manifest, indent=2))
 
@@ -666,6 +697,7 @@ def _build_manifest(
     video_chapters: list[dict] | None = None,
     personal_observations: str | None = None,
     lesson_plan: list[dict] | None = None,
+    structured_lesson: dict | None = None,
 ) -> dict:
     w, h = img.size
 
@@ -742,5 +774,7 @@ def _build_manifest(
             lesson_plan = _attach_notes(lesson_plan, image_brief, medium)
     manifest["lesson_plan"] = lesson_plan
     manifest["image_brief"] = image_brief or {}
+    # Phase 4: the structured composition-first Lesson (schemas/lesson.py).
+    manifest["lesson"] = structured_lesson
 
     return manifest

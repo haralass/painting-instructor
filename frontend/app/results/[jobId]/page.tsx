@@ -10,6 +10,7 @@ import Viewer from "./components/Viewer";
 import LessonPlayer from "./components/LessonPlayer";
 import CritiquePanel from "./components/CritiquePanel";
 import SquintSimulator from "./components/SquintSimulator";
+import ConstructionView from "./components/ConstructionView";
 import ProgressiveReveal from "./components/ProgressiveReveal";
 import HierarchicalControls from "./components/HierarchicalControls";
 import TeachingAside from "./components/TeachingAside";
@@ -192,6 +193,7 @@ export default function ResultsPage() {
           <div className="flex flex-col gap-1 mb-3">
             {([
               ["lesson",              "Lesson",          Boolean(manifest?.lesson_plan?.length)],
+              ["construction",        "Construction",    Boolean(manifest?.drawing_json)],
               ["hierarchical_lesson", "Explore Layers",  true],
               ["build_up",            "Build up",        Boolean(manifest?.detail_levels && Object.keys(manifest.detail_levels).length > 0)],
               ["squint",              "Squint",          true],
@@ -257,6 +259,7 @@ export default function ResultsPage() {
                style={{ borderColor: "var(--border)" }}>
             {([
               ["lesson",              "Lesson"],
+              ["construction",        "Construction"],
               ["hierarchical_lesson", "Layers"],
               ["build_up",            "Build up"],
               ["squint",              "Squint"],
@@ -290,6 +293,10 @@ export default function ResultsPage() {
               referenceUrl={referenceUrl}
               videoReady={videoReady}
             />
+          ) : viewMode === "construction" ? (
+            <div className="flex-1 flex flex-col min-h-0 p-4">
+              <ConstructionView jobId={jobId} referenceUrl={referenceUrl} manifest={manifest} />
+            </div>
           ) : viewMode === "critique" ? (
             <CritiquePanel jobId={jobId} referenceUrl={referenceUrl} />
           ) : viewMode === "squint" ? (

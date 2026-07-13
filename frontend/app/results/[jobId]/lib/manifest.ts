@@ -32,6 +32,53 @@ export const OUTLINE_SUBLAYER_LABELS: Record<string, string> = {
 
 export type CompareMode = "analysis" | "reference" | "side_by_side" | "overlay" | "split";
 
+// ── Phase 3: structured drawing construction (mirrors backend/schemas/drawing.py) ──
+export type Pt = [number, number];
+export type EdgeCause = {
+  scores: Record<string, number>;
+  primary: string | null;
+  confidence: number;
+};
+export type DrawLandmark = {
+  id: string; category: string; x: number; y: number; normalized: Pt;
+  importance: number; confidence: number; visibility_level: number; lesson_order: number;
+};
+export type DrawAxis = {
+  id: string; start: Pt; end: Pt; orientation_deg: number; role: string; importance: number;
+};
+export type DrawPath = {
+  id: string; category: string; points: Pt[]; closed: boolean;
+  hierarchy_level: number; importance: number; edge_cause?: EdgeCause | null;
+  stage: string; lesson_order: number;
+};
+export type DrawNegativeSpace = {
+  id: string; polygon: Pt[]; touches_edges: string[]; area_fraction: number; importance: number;
+};
+export type DrawEnvelope = { id: string; vertices: Pt[]; segment_count: number; landmark_ids: string[] };
+export type DrawProportion = { id: string; kind: string; label: string; value?: number | null; reference_points: Pt[]; landmark_ids: string[] };
+export type DrawStage = {
+  id: string; order: number; title: string; summary: string;
+  landmark_ids: string[]; axis_ids: string[]; path_ids: string[];
+  negative_space_ids: string[]; proportion_check_ids: string[]; is_checkpoint: boolean;
+};
+export type DrawingAnalysis = {
+  id: string; image_width: number; image_height: number; canvas_ratio: number;
+  subject_bounds: {
+    x_min: number; y_min: number; x_max: number; y_max: number;
+    margins: Record<string, number>; occupied_fraction: number; source: string; confidence: number;
+  };
+  occupied_area: Pt[];
+  main_axis?: DrawAxis | null;
+  dominant_slopes: DrawAxis[];
+  landmarks: DrawLandmark[];
+  negative_spaces: DrawNegativeSpace[];
+  proportion_checks: DrawProportion[];
+  envelope?: DrawEnvelope | null;
+  silhouette?: DrawPath | null;
+  internal_paths: DrawPath[];
+  construction_order: DrawStage[];
+};
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 export type JobStatus = {
   status: "queued" | "processing" | "completed" | "completed_with_warnings" | "failed";
@@ -84,6 +131,7 @@ export type Manifest = {
   edge_maps?: Record<string, string>;  // global, non-level-filtered — "primary"|"secondary"|"decorative"|"texture" → rel path
   label_maps?: Record<string, string>; // per-level RGB-encoded region-id maps (viewer click-select)
   regions_json?: string;               // region hierarchy metadata for this job
+  drawing_json?: string;               // Phase 3 structured drawing construction
   outline_composites?: Record<string, string>;  // global (non-level-filtered) outline composites
   palette: {
     id: number; name: string; base_rgb: [number,number,number]; area_fraction: number;

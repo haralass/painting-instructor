@@ -33,6 +33,11 @@ type Props = {
   manifest?: Manifest | null;
   syncKey?: string;          // viewers sharing a key mirror zoom/pan
   hideControls?: boolean;    // secondary pane of side-by-side
+  // A vector overlay in analysis-image coordinates (viewBox = image W×H),
+  // mounted aligned to the image and rescaled by OSD. Reusable by the
+  // construction / contour / value / edge lessons (spec §4).
+  svgOverlay?: string;
+  disableSelection?: boolean;
 };
 
 // ── Cross-viewer pan/zoom sync (side-by-side) ────────────────────────────────
@@ -63,8 +68,10 @@ const viewKey = (jobId: string) => `pi:viewport:${jobId}`;
 export default function Viewer({
   jobId, referenceUrl, overlays, opacity, mode, imageWidth, imageHeight,
   labelMapUrl, regionsUrl, manifest, syncKey, hideControls,
+  svgOverlay, disableSelection,
 }: Props) {
   const hostRef    = useRef<HTMLDivElement>(null);
+  const svgSlot    = useRef<HTMLElement | null>(null);
   const wrapRef    = useRef<HTMLDivElement>(null);
   const viewerRef  = useRef<OpenSeadragon.Viewer | null>(null);
   const labelData  = useRef<{ url: string; data: ImageData } | null>(null);
@@ -108,7 +115,7 @@ export default function Viewer({
     viewerRef.current = viewer;
 
     viewer.addHandler("canvas-click", (e) => {
-      if (!e.quick) return;
+      if (!e.quick || disableSelection) return;
       const img = viewer.viewport.viewerElementToImageCoordinates(e.position);
       void handleClick(Math.round(img.x), Math.round(img.y),
                        (e.originalEvent as MouseEvent)?.shiftKey === true);
@@ -230,6 +237,27 @@ export default function Viewer({
     const s = item.getContentSize();
     item.setClip(new OpenSeadragon.Rect(0, 0, s.x * split, s.y));
   }
+
+  // ── Vector (SVG) overlay in analysis-image coordinates ────────────────────
+  // Mounted over the whole image and rescaled by OSD, so construction lines
+  // stay aligned through zoom/pan/resize/fullscreen. Its viewBox is the
+  // analysis image size; points are analysis px (drawing.json space).
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer?.world || !viewer.drawer || !ready) return;
+    if (svgSlot.current) { viewer.removeOverlay(svgSlot.current); svgSlot.current = null; }
+    if (!svgOverlay) return;
+    const holder = document.createElement("div");
+    holder.style.width = "100%"; holder.style.height = "100%";
+    holder.style.pointerEvents = "none";
+    holder.innerHTML = svgOverlay;
+    const svg = holder.firstElementChild as SVGElement | null;
+    if (svg) { svg.style.width = "100%"; svg.style.height = "100%"; svg.style.overflow = "visible"; }
+    const aspect = (imageHeight ?? 1) / (imageWidth ?? 1);
+    viewer.addOverlay({ element: holder, location: new OpenSeadragon.Rect(0, 0, 1, aspect) });
+    svgSlot.current = holder;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [svgOverlay, ready, imageWidth, imageHeight]);
 
   // ── Region lookups ────────────────────────────────────────────────────────
   const ensureLookups = useCallback(async (): Promise<boolean> => {

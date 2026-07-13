@@ -36,8 +36,9 @@ _MEDIUM_EXEC: dict[str, dict[str, str]] = {
     "oil": {
         "surface": "Tone the canvas with a thin mid-value wash (an imprimatura) and wipe it back "
                    "where the lights will go, so you are not judging colour against white.",
-        "value":   "Work thin-to-thick and generally dark-to-light: keep the darks lean and let the "
-                   "lights sit opaque on top.",
+        "value":   "Work thin-to-thick and generally dark-to-light, fat over lean: keep your early, "
+                   "leaner darks thin (more solvent, less oil) and let fatter, richer paint carry the "
+                   "lights on top, so the paint film dries without cracking.",
         "mixture": "Pre-mix your main strings on the palette before touching the canvas — oil stays "
                    "workable, so mixing ahead keeps the masses consistent.",
         "edges":   "Soften edges by blending wet-into-wet while the paint is open; save your hardest "
@@ -46,8 +47,10 @@ _MEDIUM_EXEC: dict[str, dict[str, str]] = {
     "watercolor": {
         "surface": "Plan and preserve your whites now — the white of the paper is your lightest "
                    "value and you cannot paint it back later.",
-        "value":   "Work strictly light-to-dark in transparent layers; let each wash dry before the "
-                   "next unless you want them to bleed.",
+        "value":   "Work strictly light-to-dark in transparent layers, lightest washes first. Judge "
+                   "each value only once it has fully dried — watercolour dries lighter than it looks "
+                   "wet — and never lay a dark you can't lift back out: hold your deepest, most "
+                   "unrecoverable darks back until last.",
         "mixture": "Mix generous dilute washes; test the value on scrap — watercolour dries lighter "
                    "than it looks wet.",
         "edges":   "Control edges by timing: wet-on-wet for soft, wet-on-dry for crisp. A dark laid "
@@ -56,7 +59,8 @@ _MEDIUM_EXEC: dict[str, dict[str, str]] = {
     "acrylic": {
         "surface": "A thin toned ground helps, but acrylic dries fast — only tone as much as you can "
                    "work before it sets.",
-        "value":   "Pre-mix more than you think you need: acrylic dries a shade darker and won't "
+        "value":   "Pre-mix more than you think you need and work in sections you can finish before "
+                   "they set — acrylic dries fast and a shade darker than it looks wet, and won't "
                    "reblend once dry.",
         "mixture": "Keep a wet palette; work in workable sections and glaze thin layers for depth.",
         "edges":   "Blend quickly while wet, or soften afterwards with a thin glaze — you can't move "
@@ -69,6 +73,9 @@ _MEDIUM_EXEC: dict[str, dict[str, str]] = {
                    "shading every small change.",
         "mixture": "Your 'mixtures' are pressure and layering — establish 3 value masses before any "
                    "blending.",
+        "value_range": "Establish your three value masses now, with a few light swatch patches: the "
+                   "white of the paper (lightest), a mid grey, and your darkest dark. Every value you "
+                   "lay down afterwards is a layered adjustment between those three anchors.",
         "edges":   "Vary edges with pressure and a blending stump; lift with an eraser for the "
                    "softest transitions and highlights.",
     },
@@ -79,6 +86,10 @@ _MEDIUM_EXEC: dict[str, dict[str, str]] = {
                    "darks rich.",
         "mixture": "Blend with a stump for the mid-tones; keep the lightest lights clean by lifting, "
                    "not by leaving paper.",
+        "value_range": "Your sheet is already toned mid-grey, so establish the other two masses now: "
+                   "lift your lightest lights out of that grey with a kneaded eraser, and block your "
+                   "darkest darks with the stick. You're drawing in both directions at once — "
+                   "subtracting light, adding dark — from the mid-grey ground.",
         "edges":   "Lost-and-found edges are charcoal's strength — smudge to lose an edge, sharpen "
                    "with a fresh point or eraser to find one.",
     },
@@ -97,6 +108,20 @@ _MEDIUM_EXEC: dict[str, dict[str, str]] = {
 
 def _exec(medium: str, key: str) -> str:
     return _MEDIUM_EXEC.get(medium, _MEDIUM_EXEC["oil"]).get(key, "")
+
+
+def _form_phase_note(medium: str) -> str:
+    """Extra process note for the form-modelling step, where the physical
+    medium changes how you build form (not just the wording): oil's fat-
+    over-lean sequencing and acrylic's glaze-don't-rework habit."""
+    if medium == "oil":
+        return (" Keep the early, leaner passes thin (more solvent, less oil) and let later, richer "
+                "passes go fatter on top — fat over lean — so the paint film dries without cracking; "
+                "your darks especially should stay thin.")
+    if medium == "acrylic":
+        return (" Acrylic won't reblend once it's dry, so once a passage has set, deepen or shift it "
+                "with a thin glaze rather than trying to rework it wet.")
+    return ""
 
 
 class _Builder:
@@ -342,6 +367,22 @@ def generate_lesson(
         completion=_confirm("The surface is ready and you're no longer judging against pure white."),
         mistake="Judging your first values against a blank white surface.",
     )
+    if medium == "watercolor":
+        # Watercolour is subtractive — the whites are the paper, not paint, and
+        # once a wash covers one there is no painting it back. This has to be
+        # decided before any light/shadow split, let alone a wash goes down.
+        b.step(
+            capability_id="notan", phase="value", importance="pivotal",
+            title="Reserve the whites",
+            objective="Identify and protect every area that must stay paper-white before any wash "
+                      "touches the paper.",
+            action="Mark every highlight and white area now — with a light pencil line, or masking "
+                   "fluid/frisket if you want a hard edge there. Once a wash covers the paper, that "
+                   "white is gone for good.",
+            overlays=[OverlayRef(kind="value_mask", asset=assets.get("value_zones_map"))],
+            completion=_confirm("Every area meant to stay white is marked or masked before the first wash."),
+            mistake="Discovering a missed highlight only after a wash has already covered it.",
+        )
     dark_frac = brief.get("dark_fraction")
     split_note = ("" if dark_frac is None
                   else f" About {int(dark_frac*100)}% of this image reads as shadow — "
@@ -367,16 +408,30 @@ def generate_lesson(
         mistake="Too many half-tones so the value structure turns to mud.",
         checkpoint_id=cp_val,
     )
-    mixture_names = ", ".join(p.get("name", "") for p in palette[:6]) if palette else ""
-    b.step(
-        capability_id="color_palette", phase="value",
-        title="Prepare the working mixtures",
-        objective="Mix the main colour strings you'll paint with.",
-        action=_exec(medium, "mixture") + (f" Your main colours: {mixture_names}." if mixture_names else ""),
-        mixture=mixture_names or None,
-        completion=_confirm("Your main mixtures are ready before you start blocking colour."),
-        mistake="Mixing every colour from scratch on the canvas, so nothing stays consistent.",
-    )
+    if medium in ("pencil", "charcoal"):
+        # There is no paint to mix — the equivalent groundwork is deciding the
+        # value range itself, so this step replaces "mixtures" rather than
+        # reusing its wording.
+        b.step(
+            capability_id="notan", phase="value",
+            title="Set your value range",
+            objective="Establish 3 value masses — your lightest light, midtone and darkest dark — "
+                      "before rendering any single form.",
+            action=_exec(medium, "value_range"),
+            completion=_confirm("Your three value masses are established before you refine any single area."),
+            mistake="Rendering one area to a finish before the overall value range is decided.",
+        )
+    else:
+        mixture_names = ", ".join(p.get("name", "") for p in palette[:6]) if palette else ""
+        b.step(
+            capability_id="color_palette", phase="value",
+            title="Prepare the working mixtures",
+            objective="Mix the main colour strings you'll paint with.",
+            action=_exec(medium, "mixture") + (f" Your main colours: {mixture_names}." if mixture_names else ""),
+            mixture=mixture_names or None,
+            completion=_confirm("Your main mixtures are ready before you start blocking colour."),
+            mistake="Mixing every colour from scratch on the canvas, so nothing stays consistent.",
+        )
     if masses:
         first = masses[0]
         b.step(
@@ -400,7 +455,7 @@ def generate_lesson(
         title="Model the form",
         objective="Add the halftones and transitions that turn flat masses into form.",
         action="Work the transitions between light and shadow; separate form shadow from cast shadow "
-               "where the reference shows it.",
+               "where the reference shows it." + _form_phase_note(medium),
         completion=_confirm("The main forms read as solid, not flat."),
         mistake="Blending everything smooth so the form goes soft and the drawing is lost.",
     )

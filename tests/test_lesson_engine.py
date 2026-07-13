@@ -93,13 +93,126 @@ def test_guidance_changes_granularity_not_geometry():
 def test_medium_changes_execution_not_order():
     oil = _gen("oil")
     wc = _gen("watercolor")
-    # same phase sequence
-    assert [s.phase for s in oil.steps] == [s.phase for s in wc.steps]
+    # composition + drawing are medium-agnostic, so those step titles are
+    # identical; watercolour may add extra *value*-phase steps (e.g. "Reserve
+    # the whites"), so the canonical phase order — not the exact step list —
+    # is the invariant that must hold across mediums.
+    oil_structural = [s.title for s in oil.steps if s.phase in ("composition", "drawing")]
+    wc_structural = [s.title for s in wc.steps if s.phase in ("composition", "drawing")]
+    assert oil_structural == wc_structural
+    phase_order = ["composition", "drawing", "value", "colour", "form", "edges", "detail"]
+    for L in (oil, wc):
+        idxs = [phase_order.index(s.phase) for s in L.steps]
+        assert idxs == sorted(idxs), f"phase order broken for medium {L.medium}"
     # different surface-prep execution
     oil_surface = next(s.action for s in oil.steps if s.title == "Prepare the surface")
     wc_surface = next(s.action for s in wc.steps if s.title == "Prepare the surface")
     assert oil_surface != wc_surface
     assert "white" in wc_surface.lower() or "paper" in wc_surface.lower()
+
+
+def test_watercolor_reserves_whites_oil_does_not():
+    wc = _gen("watercolor")
+    oil = _gen("oil")
+    assert any(s.title == "Reserve the whites" for s in wc.steps)
+    assert not any(s.title == "Reserve the whites" for s in oil.steps)
+    reserve = next(s for s in wc.steps if s.title == "Reserve the whites")
+    assert reserve.phase == "value"
+    assert reserve.completion_check is not None and reserve.common_mistake
+    # it comes before the light/shadow split, at the very start of the value phase
+    split = next(s for s in wc.steps if "light and shadow" in s.title.lower())
+    assert reserve.order < split.order
+    prepare_surface = next(s for s in wc.steps if s.title == "Prepare the surface")
+    assert prepare_surface.order < reserve.order < split.order
+
+
+def test_watercolor_value_step_is_strictly_light_to_dark_and_dry_judged():
+    wc = _gen("watercolor")
+    value_step = next(s for s in wc.steps if s.title.startswith("Simplify to"))
+    text = value_step.action.lower()
+    assert "light-to-dark" in text or "light to dark" in text
+    assert "dried" in text or "dry" in text
+    assert "unrecoverable" in text or "can't lift" in text or "cannot lift" in text
+
+
+def test_oil_keeps_imprimatura_and_notes_fat_over_lean():
+    oil = _gen("oil")
+    surface = next(s for s in oil.steps if s.title == "Prepare the surface")
+    assert "imprimatura" in surface.action.lower()
+    form = next(s for s in oil.steps if s.title == "Model the form")
+    assert "fat over lean" in form.action.lower()
+
+
+def test_acrylic_notes_sections_premixing_and_glazing():
+    acrylic = _gen("acrylic")
+    value_step = next(s for s in acrylic.steps if s.title.startswith("Simplify to"))
+    text = value_step.action.lower()
+    assert "section" in text
+    assert "pre-mix" in text or "premix" in text
+    form = next(s for s in acrylic.steps if s.title == "Model the form")
+    assert "glaz" in form.action.lower()
+
+
+def test_pencil_and_charcoal_replace_mixtures_with_value_range():
+    for medium in ("pencil", "charcoal"):
+        L = _gen(medium)
+        titles = [s.title for s in L.steps]
+        assert "Prepare the working mixtures" not in titles, f"{medium} should not mix paint"
+        assert "Set your value range" in titles
+        value_range = next(s for s in L.steps if s.title == "Set your value range")
+        assert value_range.phase == "value"
+        assert "3 value masses" in value_range.objective or "three value masses" in value_range.objective.lower()
+    # every other medium still mixes real paint/colour
+    for medium in ("oil", "watercolor", "acrylic", "digital"):
+        titles = [s.title for s in _gen(medium).steps]
+        assert "Prepare the working mixtures" in titles
+        assert "Set your value range" not in titles
+
+
+def test_charcoal_value_range_step_tones_then_lifts():
+    charcoal = _gen("charcoal")
+    step = next(s for s in charcoal.steps if s.title == "Set your value range")
+    text = step.action.lower()
+    assert "lift" in text
+    assert "grey" in text or "gray" in text
+    # the sheet-toning itself happens earlier, in "Prepare the surface"
+    surface = next(s for s in charcoal.steps if s.title == "Prepare the surface")
+    assert "tone" in surface.action.lower()
+    assert surface.order < step.order
+
+
+def test_digital_uses_selections_not_layer_per_object():
+    digital = _gen("digital")
+    value_step = next(s for s in digital.steps if s.title.startswith("Simplify to"))
+    text = value_step.action.lower()
+    assert "selection" in text or "mask" in text
+    assert "layer per object" in text or "layer-per-object" in text
+    mixtures = next(s for s in digital.steps if s.title == "Prepare the working mixtures")
+    assert "non-destructive" in mixtures.action.lower() or "non-destructively" in mixtures.action.lower()
+    assert "reference" in mixtures.action.lower()
+
+
+def test_composition_and_drawing_phases_are_medium_agnostic():
+    mediums = ["oil", "watercolor", "pencil"]
+    lessons = {m: _gen(m) for m in mediums}
+    reference = [s.title for s in lessons["oil"].steps if s.phase in ("composition", "drawing")]
+    assert reference  # sanity: there really are structural steps to compare
+    for m in mediums[1:]:
+        titles = [s.title for s in lessons[m].steps if s.phase in ("composition", "drawing")]
+        assert titles == reference, f"composition/drawing titles diverged for medium {m}"
+
+
+def test_all_mediums_produce_a_valid_graph_at_every_guidance_level():
+    for medium in ("oil", "watercolor", "acrylic", "pencil", "charcoal", "digital"):
+        for guidance in ("full", "balanced", "autonomy"):
+            L = generate_lesson(DRAWING, VALUE_ZONES, PALETTE, BRIEF, medium, guidance,
+                                assets={"value_zones_map": "j/value_zones.png"})
+            assert L.validate_graph() == [], f"{medium}/{guidance} graph invalid"
+            # drawing checkpoint survives every guidance level, and still gates before values
+            assert any(c.type == "silhouette" for c in L.checkpoints)
+            draw_cp_order = next(s.order for s in L.steps if s.checkpoint_id == "cp_silhouette")
+            first_value_order = next((s.order for s in L.steps if s.phase == "value"), 1e9)
+            assert draw_cp_order < first_value_order
 
 
 def test_skill_maps_to_guidance():

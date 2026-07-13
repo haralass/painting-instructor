@@ -30,7 +30,7 @@ export const OUTLINE_SUBLAYER_LABELS: Record<string, string> = {
   texture:    "Texture",
 };
 
-export type CompareMode = "analysis" | "reference" | "side_by_side" | "overlay";
+export type CompareMode = "analysis" | "reference" | "side_by_side" | "overlay" | "split";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export type JobStatus = {

@@ -120,7 +120,7 @@ export default function HierarchicalControls({
 
       {/* Compare mode */}
       <div className="flex gap-2 mt-2 flex-wrap">
-        {(["analysis", "reference", "side_by_side", "overlay"] as CompareMode[]).map(m => (
+        {(["analysis", "reference", "overlay", "side_by_side", "split"] as CompareMode[]).map(m => (
           <button key={m}
                   onClick={() => setCompareMode(m)}
                   className="px-3 py-1 rounded border text-xs transition-colors"
@@ -132,6 +132,7 @@ export default function HierarchicalControls({
             {m === "analysis"    ? "Analysis"
            : m === "reference"  ? "Reference"
            : m === "side_by_side" ? "Side by Side"
+           : m === "split"      ? "Before/After"
            : "Overlay"}
           </button>
         ))}

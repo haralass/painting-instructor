@@ -317,26 +317,55 @@ export default function ResultsPage() {
 
           {/* ── Main image display ──────────────────────────────────────── */}
           <div className="p-4 flex-1 flex flex-col min-h-0">
-            {viewMode === "hierarchical_lesson" && compareMode === "analysis" ? (
-              /* Phase 2: the real workspace — zoom/pan/fit/100%/flip/minimap
-                 with aligned overlays and click-to-inspect regions resolved
-                 against the existing merge-tree hierarchy. */
-              <Viewer
-                referenceUrl={referenceUrl}
-                overlays={activeAssets}
-                opacity={opacity}
-                imageWidth={manifest?.image?.width}
-                imageHeight={manifest?.image?.height}
-                labelMapUrl={manifest?.label_maps?.[String(detailLevel)]
-                  ? outputUrl(manifest.label_maps[String(detailLevel)]) : undefined}
-                regionsUrl={outputUrl(manifest?.regions_json ?? `${jobId}/regions.json`)}
-                manifest={manifest}
-              />
+            {viewMode === "hierarchical_lesson" ? (
+              /* Phase 2: the real workspace — one OpenSeadragon viewer drives
+                 every compare mode (Reference / Overlay / Before-After split /
+                 synced Side-by-Side) plus region hover/click selection against
+                 the merge-tree hierarchy. No duplicated viewer logic. */
+              compareMode === "side_by_side" ? (
+                <div className="flex gap-3 flex-1 min-h-0">
+                  {([["reference", true], ["overlay", false]] as const).map(([m, primary]) => (
+                    <div key={m} className="flex-1 min-w-0 flex flex-col">
+                      <p className="label-xs mb-1">{primary ? "Reference" : "Analysis"}</p>
+                      <Viewer
+                        jobId={jobId}
+                        referenceUrl={referenceUrl}
+                        overlays={activeAssets}
+                        opacity={1}
+                        mode={m}
+                        syncKey={`sbs:${jobId}`}
+                        hideControls={!primary}
+                        imageWidth={manifest?.image?.width}
+                        imageHeight={manifest?.image?.height}
+                        labelMapUrl={manifest?.label_maps?.[String(detailLevel)]
+                          ? outputUrl(manifest.label_maps[String(detailLevel)]) : undefined}
+                        regionsUrl={outputUrl(manifest?.regions_json ?? `${jobId}/regions.json`)}
+                        manifest={manifest}
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <Viewer
+                  jobId={jobId}
+                  referenceUrl={referenceUrl}
+                  overlays={activeAssets}
+                  opacity={compareMode === "overlay" ? opacity : 1}
+                  mode={compareMode === "reference" ? "reference"
+                      : compareMode === "split" ? "split" : "overlay"}
+                  imageWidth={manifest?.image?.width}
+                  imageHeight={manifest?.image?.height}
+                  labelMapUrl={manifest?.label_maps?.[String(detailLevel)]
+                    ? outputUrl(manifest.label_maps[String(detailLevel)]) : undefined}
+                  regionsUrl={outputUrl(manifest?.regions_json ?? `${jobId}/regions.json`)}
+                  manifest={manifest}
+                />
+              )
             ) : (
             <ImageDisplay
               compareMode={compareMode}
               analysisUrl={analysisUrl}
-              activeAssets={viewMode === "classic_analysis" ? [] : activeAssets}
+              activeAssets={[]}
               referenceUrl={referenceUrl}
               opacity={opacity}
               imageWidth={manifest?.image?.width}

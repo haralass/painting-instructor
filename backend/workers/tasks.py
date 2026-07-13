@@ -293,6 +293,9 @@ def run_pipeline(
             texture_detail=texture_detail,
             background_detail=background_detail,
             region_complexity=region_complexity,  # A6
+            subj_mask=subj_mask,   # Phase 3: drawing construction + edge-cause
+            depth_lbl=depth_lbl,
+            job_id=job_id,
         )
         timings["hierarchical"] = round(time.perf_counter() - t0, 2)
         # Append hierarchical detail level outputs as additional pages
@@ -701,6 +704,9 @@ def _build_manifest(
         # Per-level RGB-encoded region-id maps for viewer click-select.
         "label_maps": {str(k): rel_to_outputs(p) for k, p in (hier.get("label_maps") or {}).items() if p},
         "regions_json": rel_to_outputs(hier.get("regions_json")),
+        # Phase 3: structured drawing-construction analysis (bounds, landmarks,
+        # envelope, silhouette, internal paths, pedagogical construction order).
+        "drawing_json": rel_to_outputs(hier.get("drawing_json")),
         "palette":        _palette_with_recipes(hier.get("palette", []), medium, brand_id),
         "colour_families":hier.get("colour_families", []),
         "value_zones":    hier.get("value_zone_list", []),

@@ -32,6 +32,9 @@ def run_hierarchical_analysis(
     texture_detail: bool = True,
     background_detail: bool = False,
     region_complexity: int = 3,  # A6: 1–5, controls hierarchy resolution independently of palette
+    subj_mask: np.ndarray | None = None,   # Phase 3: float subject mask for drawing construction
+    depth_lbl: np.ndarray | None = None,   # Phase 3: depth planes for edge-cause attribution
+    job_id: str | None = None,
 ) -> dict:
     """
     Full hierarchical analysis pipeline.
@@ -213,6 +216,28 @@ def run_hierarchical_analysis(
     except Exception:
         log.warning("render_smart_dot_to_dot failed", exc_info=True)
 
+    # ── 5e. Drawing construction analysis (Phase 3) ──────────────────────────
+    # Turn the edges/regions/subject/depth signals into a stored, structured
+    # account of how the drawing is built (bounds → landmarks → envelope →
+    # silhouette → internal structure), in a pedagogical order. Never fatal.
+    drawing_path: str | None = None
+    try:
+        from .drawing import build_drawing_analysis
+        from .edge_cause import attach_edge_causes
+        drawing = build_drawing_analysis(
+            cache=cache, regions=regions, edges=edges,
+            subj_mask=subj_mask, depth_lbl=depth_lbl, zone_map=zone_map,
+            job_id=job_id,
+        )
+        attach_edge_causes(drawing, cache, depth_lbl, zone_map)
+        drawing.source_assets = {
+            "regions": "regions.json", "edges": "edges.json",
+        }
+        drawing_path = str(out_dir / "drawing.json")
+        Path(drawing_path).write_text(drawing.model_dump_json(indent=2))
+    except Exception:
+        log.warning("drawing construction analysis failed", exc_info=True)
+
     # ── 6. Write regions JSON ─────────────────────────────────────────────────
     regions_path = out_dir / "regions.json"
     regions_path.write_text(json.dumps(
@@ -275,6 +300,7 @@ def run_hierarchical_analysis(
         "edge_maps":           _edge_map_paths,  # A4: individual maps for frontend sublayer toggles
         "outline_composites":  _outline_composite_paths,  # global composites for lesson_plan resolution
         "label_maps":          label_map_paths,  # per-level RGB-encoded region ids (viewer click-select)
+        "drawing_json":        drawing_path,     # Phase 3 structured drawing construction
         "paint_by_numbers":    pbn_path,   # hierarchy-based page (replaces classic when both exist)
         "study_overlay":       study_path, # white region contours ON the reference (detail study)
         "smart_dot_to_dot":    dots_path,  # edge-hierarchy dots (replaces classic when both exist)

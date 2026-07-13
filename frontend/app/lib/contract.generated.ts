@@ -359,6 +359,27 @@ export const CAPABILITIES: CapabilityCard[] = [
     "sample": null
   },
   {
+    "id": "drawing_construction",
+    "name": "Drawing Construction",
+    "category": "teaching",
+    "description": "How the drawing is built — bounds, landmarks, axis, envelope, then the refined silhouette and internal structure, in the order you should draw them.",
+    "why": "A painting is only as good as the drawing under it. This shows the construction order — placement and big shapes first, detail last — instead of a finished outline to copy blindly.",
+    "tip": "Work in this order: mark the outer limits, block the envelope, check the negative spaces and proportions, and only then refine the silhouette.",
+    "advertised": true,
+    "workspace": false,
+    "modes": {
+      "study": true,
+      "lesson": false,
+      "check": false
+    },
+    "supports": {
+      "local_region": true,
+      "manual_correction": true,
+      "checkpoint": true
+    },
+    "sample": null
+  },
+  {
     "id": "detail_levels",
     "name": "Detail Explorer",
     "category": "teaching",

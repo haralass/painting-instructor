@@ -321,6 +321,21 @@ CAPABILITIES: list[Capability] = [
         pipeline_step=None, sample=None,
     ),
     Capability(
+        id="drawing_construction", name="Drawing Construction", category="teaching", order=215,
+        description="How the drawing is built — bounds, landmarks, axis, envelope, then the refined "
+                    "silhouette and internal structure, in the order you should draw them.",
+        why="A painting is only as good as the drawing under it. This shows the construction "
+            "order — placement and big shapes first, detail last — instead of a finished outline "
+            "to copy blindly.",
+        tip="Work in this order: mark the outer limits, block the envelope, check the negative "
+            "spaces and proportions, and only then refine the silhouette.",
+        advertised=True, workspace=False,
+        modes=CapabilityModes(study=True),
+        supports=CapabilitySupports(local_region=True, manual_correction=True, checkpoint=True),
+        outputs=[CapabilityOutput(kind="json", key="drawing_construction")],
+        pipeline_step="hierarchical", sample=None,
+    ),
+    Capability(
         id="detail_levels", name="Detail Explorer", category="teaching", order=220,
         description="One stable hierarchy of the image, from 5 masses to full detail — never re-segmented.",
         advertised=True, workspace=False,

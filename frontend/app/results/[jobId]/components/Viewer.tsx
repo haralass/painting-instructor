@@ -8,7 +8,7 @@
 // conventions: original-image pixels are authoritative.
 import { useCallback, useEffect, useRef, useState } from "react";
 import OpenSeadragon from "openseadragon";
-import { rescalePoint } from "../../../lib/imageCoords";
+import { rescalePoint, bboxToCropRect, type BBox } from "../../../lib/imageCoords";
 import type { Manifest } from "../lib/manifest";
 
 export type RegionInfo = {
@@ -38,6 +38,14 @@ type Props = {
   // construction / contour / value / edge lessons (spec §4).
   svgOverlay?: string;
   disableSelection?: boolean;
+  // Phase 2 leftover: rectangle region selection + "Analyse this area".
+  // Viewer owns the drag-to-select interaction and the resulting rectangle
+  // (ORIGINAL image px, via bboxToCropRect); the caller only learns about it
+  // through these two callbacks so it can drive the actual API call and
+  // result panel without duplicating any coordinate math.
+  onSelectArea?: (bbox: BBox) => void;
+  onClearArea?: () => void;
+  analyzingArea?: boolean;
 };
 
 // ── Cross-viewer pan/zoom sync (side-by-side) ────────────────────────────────
@@ -68,7 +76,7 @@ const viewKey = (jobId: string) => `pi:viewport:${jobId}`;
 export default function Viewer({
   jobId, referenceUrl, overlays, opacity, mode, imageWidth, imageHeight,
   labelMapUrl, regionsUrl, manifest, syncKey, hideControls,
-  svgOverlay, disableSelection,
+  svgOverlay, disableSelection, onSelectArea, onClearArea, analyzingArea,
 }: Props) {
   const hostRef    = useRef<HTMLDivElement>(null);
   const svgSlot    = useRef<HTMLElement | null>(null);
@@ -79,6 +87,7 @@ export default function Viewer({
   const children   = useRef<Map<number, number[]>>(new Map());
   const selOverlay = useRef<HTMLImageElement | null>(null);
   const hovOverlay = useRef<HTMLImageElement | null>(null);
+  const areaSlot   = useRef<HTMLDivElement | null>(null);
   const hoverId    = useRef<number>(-1);
   const modeRef    = useRef(mode);
   modeRef.current  = mode;
@@ -91,6 +100,25 @@ export default function Viewer({
   const [split, setSplit]       = useState(0.5);
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
+
+  // ── Rectangle region selection ("Select area" / "Analyse this area") ────
+  const [areaMode, setAreaMode] = useState(false);
+  const areaModeRef = useRef(areaMode);
+  areaModeRef.current = areaMode;
+  const [dragBox, setDragBox]   = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  const [areaRect, setAreaRect] = useState<BBox | null>(null);
+  const dragStartEl = useRef<{ x: number; y: number } | null>(null);
+  const draggingRef  = useRef(false);
+  const imgWRef = useRef(imageWidth);
+  const imgHRef = useRef(imageHeight);
+  imgWRef.current = imageWidth;
+  imgHRef.current = imageHeight;
+
+  function clearArea() {
+    setAreaRect(null);
+    setDragBox(null);
+    onClearArea?.();
+  }
 
   const overlaysActive = mode === "overlay" || mode === "split";
   const effOpacity = mode === "split" ? 1 : opacity;
@@ -115,7 +143,7 @@ export default function Viewer({
     viewerRef.current = viewer;
 
     viewer.addHandler("canvas-click", (e) => {
-      if (!e.quick || disableSelection) return;
+      if (!e.quick || disableSelection || areaModeRef.current) return;
       const img = viewer.viewport.viewerElementToImageCoordinates(e.position);
       void handleClick(Math.round(img.x), Math.round(img.y),
                        (e.originalEvent as MouseEvent)?.shiftKey === true);
@@ -124,6 +152,7 @@ export default function Viewer({
     // Hover highlight — throttled decode along mouse moves.
     let lastMove = 0;
     const onMove = (ev: MouseEvent) => {
+      if (areaModeRef.current) return;
       const now = performance.now();
       if (now - lastMove < 70) return;
       lastMove = now;
@@ -134,6 +163,51 @@ export default function Viewer({
     };
     viewer.element.addEventListener("mousemove", onMove);
     viewer.element.addEventListener("mouseleave", () => void handleHover(-1, -1));
+
+    // ── Rectangle drag-select ("Select area" mode) ─────────────────────────
+    // Only active while areaMode is on (mouse nav is disabled for the
+    // viewer in that state — see the areaMode effect below — so a drag here
+    // can only mean "draw a rectangle", never a pan).
+    const onPointerDown = (ev: PointerEvent) => {
+      if (!areaModeRef.current) return;
+      ev.preventDefault();
+      const r = viewer.element.getBoundingClientRect();
+      const start = { x: ev.clientX - r.left, y: ev.clientY - r.top };
+      draggingRef.current = true;
+      dragStartEl.current = start;
+      setDragBox({ left: start.x, top: start.y, width: 0, height: 0 });
+    };
+    const onPointerMove = (ev: PointerEvent) => {
+      if (!draggingRef.current || !dragStartEl.current) return;
+      const r = viewer.element.getBoundingClientRect();
+      const cx = ev.clientX - r.left, cy = ev.clientY - r.top;
+      const s = dragStartEl.current;
+      setDragBox({
+        left: Math.min(s.x, cx), top: Math.min(s.y, cy),
+        width: Math.abs(cx - s.x), height: Math.abs(cy - s.y),
+      });
+    };
+    const onPointerUp = (ev: PointerEvent) => {
+      if (!draggingRef.current || !dragStartEl.current) return;
+      draggingRef.current = false;
+      const r = viewer.element.getBoundingClientRect();
+      const s = dragStartEl.current;
+      dragStartEl.current = null;
+      setDragBox(null);
+      const end = { x: ev.clientX - r.left, y: ev.clientY - r.top };
+
+      const p0 = viewer.viewport.viewerElementToImageCoordinates(new OpenSeadragon.Point(s.x, s.y));
+      const p1 = viewer.viewport.viewerElementToImageCoordinates(new OpenSeadragon.Point(end.x, end.y));
+      const W = imgWRef.current, H = imgHRef.current;
+      if (!W || !H) return;
+      const clamped = bboxToCropRect({ x: p0.x, y: p0.y, w: p1.x - p0.x, h: p1.y - p0.y }, W, H);
+      const MIN_IMG_PX = 12; // ignore stray clicks/near-zero drags while in select mode
+      if (clamped.w < MIN_IMG_PX || clamped.h < MIN_IMG_PX) return;
+      setAreaRect(clamped);
+    };
+    viewer.element.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
 
     // Persist / restore viewport per project.
     viewer.addHandler("animation-finish", () => {
@@ -170,6 +244,9 @@ export default function Viewer({
     return () => {
       cancelled = true; leaveSync?.();
       viewer.element.removeEventListener("mousemove", onMove);
+      viewer.element.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
       viewerRef.current = null; viewer.destroy();
       // OSD's destroy() leaves its container div behind — clear it, or every
       // remount (mode switch, StrictMode) stacks another dead container.
@@ -192,7 +269,7 @@ export default function Viewer({
         case "1": v.viewport.zoomTo(v.viewport.imageToViewportZoom(1)); break;
         case "f": case "F": v.setFullScreen(!v.isFullPage()); break;
         case "h": case "H": doFlip(); break;
-        case "Escape": clearSelection(); break;
+        case "Escape": clearSelection(); clearArea(); break;
         default: return;
       }
       e.preventDefault();
@@ -201,6 +278,35 @@ export default function Viewer({
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hideControls, flip]);
+
+  // Selecting rectangles and panning the same drag gesture conflict, so
+  // toggling "Select area" on suspends OSD's own pan/zoom-by-drag — click
+  // zoom shortcuts (+/−/1/0) still work. Turning it off drops any
+  // in-progress/finished rectangle so a stale one never lingers.
+  useEffect(() => {
+    viewerRef.current?.setMouseNavEnabled(!areaMode);
+    if (!areaMode) { setDragBox(null); setAreaRect(null); }
+  }, [areaMode]);
+
+  // Finalised selection rectangle, rendered as an OSD overlay (like the
+  // region masks below) so it tracks zoom/pan/resize instead of a plain
+  // element-space div that would drift the moment the view changes.
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer?.world || !viewer.drawer || !ready) return;
+    if (areaSlot.current) { viewer.removeOverlay(areaSlot.current); areaSlot.current = null; }
+    if (!areaRect || !imageWidth || !imageHeight) return;
+    const div = document.createElement("div");
+    div.style.border = "2px solid var(--accent)";
+    div.style.background = "rgba(196,120,50,0.12)";
+    div.style.boxSizing = "border-box";
+    div.style.pointerEvents = "none";
+    const vpRect = viewer.viewport.imageToViewportRectangle(
+      new OpenSeadragon.Rect(areaRect.x, areaRect.y, areaRect.w, areaRect.h));
+    viewer.addOverlay({ element: div, location: vpRect });
+    areaSlot.current = div;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [areaRect, ready, imageWidth, imageHeight]);
 
   // ── Analysis overlays (mode-aware, with split clipping) ───────────────────
   const overlayKey = overlays.join("|") + `|${overlaysActive}`;
@@ -423,6 +529,12 @@ export default function Viewer({
           <button style={btn} title="Fullscreen (F)"
                   onClick={() => { const v = viewerRef.current; if (v) v.setFullScreen(!v.isFullPage()); }}>⛶</button>
           <button style={showNav ? btnOn : btn} title="Navigator" onClick={toggleNav}>Map</button>
+          {onSelectArea && (
+            <button style={areaMode ? btnOn : btn} title="Drag a rectangle to analyse just that area"
+                    onClick={() => setAreaMode(on => !on)}>
+              Select area
+            </button>
+          )}
           {mode === "split" && (
             <label className="flex items-center gap-2 ml-2 text-xs" style={{ color: "var(--text-dim)" }}>
               Before/After
@@ -430,7 +542,11 @@ export default function Viewer({
                      onChange={e => setSplit(Number(e.target.value))} style={{ width: 120 }} />
             </label>
           )}
-          {labelMapUrl && (
+          {areaMode ? (
+            <span className="text-xs ml-auto" style={{ color: "var(--accent)" }}>
+              Drag a rectangle around the area you want to study
+            </span>
+          ) : labelMapUrl && (
             <span className="text-xs ml-auto" style={{ color: "var(--text-dim)" }}>
               Click: select · Shift-click: add/remove · Esc: clear
             </span>
@@ -440,7 +556,44 @@ export default function Viewer({
 
       <div className="relative flex-1 min-h-0 rounded-xl overflow-hidden"
            style={{ background: "var(--surface-2)", border: "1px solid var(--border)", minHeight: 320 }}>
-        <div ref={hostRef} className="absolute inset-0" />
+        <div ref={hostRef} className="absolute inset-0" style={{ cursor: areaMode ? "crosshair" : undefined }} />
+
+        {/* Live drag-rectangle preview (element-space; only while dragging) */}
+        {dragBox && (
+          <div className="absolute pointer-events-none"
+               style={{
+                 left: dragBox.left, top: dragBox.top, width: dragBox.width, height: dragBox.height,
+                 border: "2px dashed var(--accent)", background: "rgba(196,120,50,0.15)", zIndex: 5,
+               }} />
+        )}
+
+        {/* Finished selection: analyse / clear ─────────────────────────── */}
+        {areaRect && onSelectArea && !hideControls && (
+          <div className="absolute right-3 bottom-3 p-3 rounded-xl text-xs"
+               style={{ background: "var(--paper)", border: "1px solid var(--border-strong)",
+                        boxShadow: "0 10px 30px rgba(63,48,28,0.18)", maxWidth: 240, zIndex: 10 }}>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="font-medium" style={{ color: "var(--ink)" }}>Selected area</span>
+              <button onClick={clearArea}
+                      style={{ marginLeft: "auto", background: "none", border: "none",
+                               cursor: "pointer", color: "var(--text-dim)" }}>✕</button>
+            </div>
+            <p className="mb-2" style={{ color: "var(--text-dim)" }}>
+              {Math.round(areaRect.w)} × {Math.round(areaRect.h)} px
+            </p>
+            <button
+              onClick={() => onSelectArea(areaRect)}
+              disabled={analyzingArea}
+              className="w-full"
+              style={{
+                padding: "6px 12px", fontSize: 12, borderRadius: 8, cursor: analyzingArea ? "default" : "pointer",
+                background: "var(--accent)", color: "var(--paper)", border: "none",
+                opacity: analyzingArea ? 0.6 : 1,
+              }}>
+              {analyzingArea ? "Analysing…" : "Analyse this area"}
+            </button>
+          </div>
+        )}
 
         {picked && !hideControls && (
           <div className="absolute left-3 bottom-3 p-3 rounded-xl text-xs"

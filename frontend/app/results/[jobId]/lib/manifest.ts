@@ -204,6 +204,31 @@ export type AnalysisPage = {
   tip: string;
 };
 
+// ── Phase 2 leftover: rectangle region selection + "Analyse this area" ──
+// Mirrors backend/analysis/local.py's return dict. Selection geometry is
+// ORIGINAL image px (frontend/app/lib/imageCoords.ts convention); `offset`
+// + `scale` map any point in the local result back onto the parent image:
+//   parent_px = offset + local_px / scale
+export type LocalAnalysisBBox = { x: number; y: number; w: number; h: number };
+export type LocalAnalysisAssets = {
+  outlines: string | null;
+  regions: string | null;
+  values: string | null;
+  colours: string | null;
+  label_map: string | null;
+  regions_json: string | null;
+  detail_level: number | null;
+};
+export type LocalAnalysis = {
+  selection_id: string;
+  job_id: string;
+  bbox: LocalAnalysisBBox;             // the true crop rect, ORIGINAL image px
+  offset: { x: number; y: number };
+  scale: number;                        // working px per crop px
+  working_size: { width: number; height: number };
+  assets: LocalAnalysisAssets;          // outputs-relative paths — use outputUrl()
+};
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 export function absUrl(relPath: string | undefined | null): string {
   if (!relPath) return "";

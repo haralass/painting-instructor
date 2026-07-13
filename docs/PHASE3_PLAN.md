@@ -1,5 +1,17 @@
 # Phase 3 — Implementation Note (Structured Drawing Analysis)
 
+> **STATUS (2026-07-13): CORE COMPLETE.** Shipped on
+> `feature/phase1-foundations` (commits `81e4dad…64d3123`); 277 backend +
+> 13 frontend tests green, `next build` clean, live-verified. Drawing
+> construction is stored structured data (`drawing.json` + `manifest.
+> drawing_json`), with a soft edge-cause distribution per path, exposed in a
+> new "Construction" workspace mode that steps bounds→landmarks→envelope→
+> silhouette→internal with guidance-level granularity. Deferred to later
+> phases: user correction/editing of landmarks (Phase 4), the Lesson/Check
+> modes on this capability (Phase 4/6), local-crop re-analysis producing a
+> child DrawingAnalysis (Phase 2 "analyse this area" hook), and richer
+> alignment detection.
+
 Builds on Phase 1 (registry, schemas, project store) and Phase 2 (viewer,
 coordinate system, region selection). Goal: turn the existing edge/region/
 depth/subject signals into a **stored, structured account of how the drawing

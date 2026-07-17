@@ -218,6 +218,7 @@ export type LocalAnalysisAssets = {
   label_map: string | null;
   regions_json: string | null;
   drawing_json: string | null;
+  crop: string | null;
   detail_level: number | null;
 };
 export type LocalDrawingSummary = {

@@ -71,6 +71,8 @@ export default function ResultsPage() {
   const [localAnalysis, setLocalAnalysis]           = useState<LocalAnalysis | null>(null);
   const [localAnalysisError, setLocalAnalysisError] = useState<string | null>(null);
   const [analyzingArea, setAnalyzingArea]            = useState(false);
+  // When set, show the focused step-by-step construction of a local crop.
+  const [localConstruction, setLocalConstruction]   = useState<LocalAnalysis | null>(null);
 
   async function handleSelectArea(bbox: { x: number; y: number; w: number; h: number }) {
     setAnalyzingArea(true);
@@ -463,6 +465,12 @@ export default function ResultsPage() {
                             && ` The outer edge reads as ${localAnalysis.drawing_summary.silhouette_cause}.`}
                         </p>
                       )}
+                      {localAnalysis.assets.drawing_json && localAnalysis.assets.crop && (
+                        <button onClick={() => setLocalConstruction(localAnalysis)}
+                                className="btn-ghost mt-2" style={{ padding: "4px 12px", fontSize: 12 }}>
+                          Learn to build this area step by step →
+                        </button>
+                      )}
                     </div>
                   </>
                 )}
@@ -577,6 +585,36 @@ export default function ResultsPage() {
           />
         )}
       </div>
+
+      {/* Focused local construction — the §9 "local lesson": the child crop's
+          own step-by-step drawing construction, over a modal covering the
+          workspace. Reuses ConstructionView with the crop's drawing + image. */}
+      {localConstruction?.assets.drawing_json && localConstruction.assets.crop && (
+        <div className="fixed inset-0 z-50 flex flex-col p-4"
+             style={{ background: "rgba(36,31,22,0.55)" }}>
+          <div className="flex-1 min-h-0 flex flex-col rounded-2xl overflow-hidden p-4"
+               style={{ background: "var(--bg)", border: "1px solid var(--border-strong)" }}>
+            <div className="flex items-center justify-between mb-3 flex-shrink-0">
+              <p className="font-display text-lg" style={{ color: "var(--ink)" }}>
+                Building this area — {Math.round(localConstruction.bbox.w)}×{Math.round(localConstruction.bbox.h)}px
+                <span className="text-sm ml-2" style={{ color: "var(--text-dim)" }}>
+                  a focused construction of just your selection
+                </span>
+              </p>
+              <button onClick={() => setLocalConstruction(null)} className="btn-ghost"
+                      style={{ padding: "6px 16px", fontSize: 13 }}>Close ✕</button>
+            </div>
+            <div className="flex-1 min-h-0">
+              <ConstructionView
+                jobId={jobId}
+                referenceUrl={outputUrl(localConstruction.assets.crop)}
+                drawingUrl={outputUrl(localConstruction.assets.drawing_json)}
+                manifest={null}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

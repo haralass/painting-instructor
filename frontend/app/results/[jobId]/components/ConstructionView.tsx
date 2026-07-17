@@ -16,20 +16,29 @@ import { outputUrl, type DrawingAnalysis, type Manifest } from "../lib/manifest"
 import { buildConstructionSvg, GUIDE_CAPS, type Guidance } from "../lib/constructionSvg";
 
 export default function ConstructionView({
-  jobId, referenceUrl, manifest,
-}: { jobId: string; referenceUrl: string; manifest: Manifest | null }) {
+  jobId, referenceUrl, manifest, drawingUrl,
+}: {
+  jobId: string; referenceUrl: string; manifest: Manifest | null;
+  // Optional override: render a specific drawing.json (e.g. a local crop's
+  // child construction) instead of the whole-image one. referenceUrl should
+  // then be the matching crop image so overlay coordinates line up.
+  drawingUrl?: string;
+}) {
   const [drawing, setDrawing] = useState<DrawingAnalysis | null>(null);
   const [failed, setFailed]   = useState(false);
   const [step, setStep]       = useState(0);
   const [guidance, setGuidance] = useState<Guidance>("full");
 
   useEffect(() => {
-    const url = manifest?.drawing_json
-      ? outputUrl(manifest.drawing_json) : outputUrl(`${jobId}/drawing.json`);
+    const url = drawingUrl
+      ? drawingUrl
+      : manifest?.drawing_json
+        ? outputUrl(manifest.drawing_json) : outputUrl(`${jobId}/drawing.json`);
+    setDrawing(null); setFailed(false); setStep(0);
     fetch(url).then(r => (r.ok ? r.json() : Promise.reject()))
       .then((d: DrawingAnalysis) => setDrawing(d))
       .catch(() => setFailed(true));
-  }, [jobId, manifest?.drawing_json]);
+  }, [jobId, manifest?.drawing_json, drawingUrl]);
 
   const stages = drawing?.construction_order ?? [];
   const stage = stages[step];

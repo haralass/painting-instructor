@@ -147,6 +147,14 @@ def run_local_analysis(
     local_dir = job_out / "local" / selection_id
     local_dir.mkdir(parents=True, exist_ok=True)
 
+    # Save the working-size crop as the background for a focused construction
+    # view (its pixel grid matches the child drawing's analysis coordinates).
+    crop_path = local_dir / "crop.jpg"
+    try:
+        crop.convert("RGB").save(crop_path, quality=90)
+    except Exception:
+        crop_path = None
+
     # Subject mask + depth for the CROP, so the child drawing construction
     # (built inside run_hierarchical_analysis) isolates the subject properly at
     # this local resolution instead of falling back to whole-crop regions.
@@ -200,6 +208,7 @@ def run_local_analysis(
         "label_map":    _rel(label_map_path),
         "regions_json": _rel(hier.get("regions_json")),
         "drawing_json": _rel(hier.get("drawing_json")),   # child construction for the crop
+        "crop":         _rel(str(crop_path)) if crop_path else None,  # background for the nested view
         "detail_level": int(level_key) if level_key else None,
     }
 

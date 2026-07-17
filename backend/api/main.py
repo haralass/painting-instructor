@@ -424,6 +424,7 @@ def get_project(project_id: str):
     project["checkpoints"]     = project_store.get_checkpoints(project_id)
     project["corrections"]     = project_store.get_corrections(project_id)
     project["attempts"]        = project_store.get_attempts(project_id)
+    project["selections"]      = project_store.get_selections(project_id)
     return project
 
 
@@ -530,11 +531,29 @@ def local_analysis(job_id: str, body: _LocalAnalysisBBox):
     from ..analysis.local import run_local_analysis, LocalAnalysisError
 
     try:
-        return run_local_analysis(job_id, body.model_dump())
+        result = run_local_analysis(job_id, body.model_dump())
     except FileNotFoundError:
         raise HTTPException(404, "Reference image not found — has the job finished analysing?")
     except LocalAnalysisError as exc:
         raise HTTPException(422, str(exc))
+
+    # Persist the deeper-look selection on the project so it survives a resume
+    # (brief §18: local deep analyses are part of the saved state). Best-effort.
+    try:
+        from ..projects import store as project_store
+        project = project_store.get_project_by_job(job_id)
+        if project:
+            project_store.add_selection(project["id"], {
+                "selection_id": result.get("selection_id"),
+                "bbox": result.get("bbox"),
+                "offset": result.get("offset"),
+                "scale": result.get("scale"),
+            })
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("selection recording failed", exc_info=True)
+
+    return result
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

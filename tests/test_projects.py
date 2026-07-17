@@ -77,6 +77,27 @@ def test_corrections_and_attempts(store):
     assert store.get_attempts(p["id"])[0]["critique"] == {"priority": "values"}
 
 
+def test_selections_persist(store):
+    p = _mk(store)
+    store.add_selection(p["id"], {"selection_id": "abc", "bbox": {"x": 10, "y": 20, "w": 30, "h": 40}})
+    sels = store.get_selections(p["id"])
+    assert len(sels) == 1 and sels[0]["data"]["selection_id"] == "abc"
+    assert sels[0]["data"]["bbox"]["w"] == 30
+
+
+def test_list_projects_summary_has_progress_and_latest_priority(store):
+    p = _mk(store)
+    store.set_step_status(p["id"], "s1", "completed")
+    store.set_step_status(p["id"], "s2", "completed")
+    # a structured priority dict (as the critique now emits)
+    store.add_attempt(p["id"], "job-1/att.jpg",
+                      critique={"priority": {"component": "proportion",
+                                             "message": "The figure is too narrow."}})
+    summary = store.list_projects()[0]
+    assert summary["completed_steps"] == 2
+    assert summary["latest_priority"] == "The figure is too narrow."
+
+
 def test_recent_ordering_follows_activity(store):
     a = _mk(store, "job-a")
     b = _mk(store, "job-b")

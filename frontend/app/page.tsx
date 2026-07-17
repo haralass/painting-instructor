@@ -309,6 +309,11 @@ export default function HomePage() {
                style={{ color: "var(--text-dim)", textDecoration: "none" }}>
               Gallery
             </a>
+            <a href="/projects"
+               className="hidden md:inline text-sm px-3 py-2 transition-colors"
+               style={{ color: "var(--text-dim)", textDecoration: "none" }}>
+              Projects
+            </a>
             <button onClick={() => scrollToSection("#create")} className="btn-primary" style={{ padding: "10px 22px", fontSize: 14 }}>
               Start painting
             </button>

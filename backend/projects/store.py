@@ -72,9 +72,16 @@ CREATE TABLE IF NOT EXISTS attempts (
     critique_json TEXT NOT NULL DEFAULT '{}',
     created_at    TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS selections (
+    id         TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    data_json  TEXT NOT NULL DEFAULT '{}',   -- {bbox, selection_id, assets, ...}
+    created_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_progress_project    ON lesson_progress(project_id);
 CREATE INDEX IF NOT EXISTS idx_checkpoints_project ON checkpoints(project_id);
 CREATE INDEX IF NOT EXISTS idx_attempts_project    ON attempts(project_id);
+CREATE INDEX IF NOT EXISTS idx_selections_project  ON selections(project_id);
 """
 
 VALID_STEP_STATUSES = {"pending", "in_progress", "completed", "skipped"}
@@ -143,12 +150,65 @@ def get_project_by_job(job_id: str) -> Optional[dict[str, Any]]:
     return _row_to_project(row) if row else None
 
 
+def _summarize(conn: sqlite3.Connection, project_id: str) -> dict[str, Any]:
+    """Lightweight resume summary for the dashboard: how many steps are done
+    and the current prioritized correction (from the most recent attempt)."""
+    completed = conn.execute(
+        "SELECT COUNT(*) FROM lesson_progress WHERE project_id = ? AND status = 'completed'",
+        (project_id,),
+    ).fetchone()[0]
+    last = conn.execute(
+        "SELECT critique_json FROM attempts WHERE project_id = ? ORDER BY created_at DESC LIMIT 1",
+        (project_id,),
+    ).fetchone()
+    latest_priority = None
+    if last:
+        try:
+            crit = json.loads(last["critique_json"]) or {}
+            pr = crit.get("priority")
+            if isinstance(pr, dict):
+                latest_priority = pr.get("message")
+            elif isinstance(pr, str):
+                latest_priority = pr
+        except Exception:
+            pass
+    return {"completed_steps": completed, "latest_priority": latest_priority}
+
+
 def list_projects(limit: int = 20) -> list[dict[str, Any]]:
     with _connect() as conn:
         rows = conn.execute(
             "SELECT * FROM projects ORDER BY updated_at DESC LIMIT ?", (limit,)
         ).fetchall()
-    return [_row_to_project(r) for r in rows]
+        out = []
+        for r in rows:
+            p = _row_to_project(r)
+            p.update(_summarize(conn, p["id"]))
+            out.append(p)
+    return out
+
+
+def add_selection(project_id: str, data: dict) -> dict[str, Any]:
+    sid = str(uuid.uuid4())
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO selections (id, project_id, data_json, created_at) VALUES (?,?,?,?)",
+            (sid, project_id, json.dumps(data), _now()),
+        )
+        _touch(conn, project_id)
+    return {"id": sid, "project_id": project_id}
+
+
+def get_selections(project_id: str) -> list[dict[str, Any]]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM selections WHERE project_id = ? ORDER BY created_at",
+            (project_id,),
+        ).fetchall()
+    return [
+        {"id": r["id"], "data": json.loads(r["data_json"]), "created_at": r["created_at"]}
+        for r in rows
+    ]
 
 
 def update_project(project_id: str, *, title: str | None = None,

@@ -453,6 +453,16 @@ export default function ResultsPage() {
                         A closer look at just this region, worked out the same way as the
                         full lesson — outlines, values and colour masses, scaled up for detail.
                       </p>
+                      {localAnalysis.drawing_summary && (
+                        <p className="mt-1" style={{ color: "var(--text)" }}>
+                          Construction here: {localAnalysis.drawing_summary.n_landmarks} landmarks,
+                          a {localAnalysis.drawing_summary.envelope_segments}-sided envelope
+                          {typeof localAnalysis.drawing_summary.occupied_fraction === "number"
+                            && `, subject fills ~${Math.round(localAnalysis.drawing_summary.occupied_fraction * 100)}% of the crop`}.
+                          {localAnalysis.drawing_summary.silhouette_cause
+                            && ` The outer edge reads as ${localAnalysis.drawing_summary.silhouette_cause}.`}
+                        </p>
+                      )}
                     </div>
                   </>
                 )}

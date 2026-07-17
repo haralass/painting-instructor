@@ -217,7 +217,16 @@ export type LocalAnalysisAssets = {
   colours: string | null;
   label_map: string | null;
   regions_json: string | null;
+  drawing_json: string | null;
   detail_level: number | null;
+};
+export type LocalDrawingSummary = {
+  subject_source: string | null;
+  occupied_fraction: number | null;
+  n_landmarks: number;
+  envelope_segments: number | null;
+  n_internal_paths: number;
+  silhouette_cause: string | null;
 };
 export type LocalAnalysis = {
   selection_id: string;
@@ -227,6 +236,7 @@ export type LocalAnalysis = {
   scale: number;                        // working px per crop px
   working_size: { width: number; height: number };
   assets: LocalAnalysisAssets;          // outputs-relative paths — use outputUrl()
+  drawing_summary: LocalDrawingSummary | null;   // focused local construction (brief §9)
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

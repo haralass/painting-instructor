@@ -147,6 +147,25 @@ def run_local_analysis(
     local_dir = job_out / "local" / selection_id
     local_dir.mkdir(parents=True, exist_ok=True)
 
+    # Subject mask + depth for the CROP, so the child drawing construction
+    # (built inside run_hierarchical_analysis) isolates the subject properly at
+    # this local resolution instead of falling back to whole-crop regions.
+    # Both are optional ML — a failure just yields the region fallback.
+    import numpy as _np
+    subj_mask = None
+    depth_lbl = None
+    try:
+        from .subject import subject_mask as _subject_mask
+        subj_mask = _subject_mask(crop)
+    except Exception:
+        subj_mask = None
+    try:
+        from .depth import depth_planes as _depth_planes
+        depth_lbl = _depth_planes(crop, 3)
+    except Exception:
+        depth_lbl = None
+    fg_mask = (subj_mask > 0.5).astype(_np.uint8) if subj_mask is not None else None
+
     hier = run_hierarchical_analysis(
         img=crop,
         out_dir=local_dir,
@@ -154,6 +173,10 @@ def run_local_analysis(
         value_zones=eff_zones,
         medium=eff_medium,
         region_complexity=eff_complexity,
+        fg_mask=fg_mask,
+        subj_mask=subj_mask,
+        depth_lbl=depth_lbl,
+        job_id=f"{job_id}/local/{selection_id}",
     )
 
     detail_levels = hier.get("detail_levels", {}) or {}
@@ -176,8 +199,13 @@ def run_local_analysis(
         "colours":      _rel(level_data.get("colours")),
         "label_map":    _rel(label_map_path),
         "regions_json": _rel(hier.get("regions_json")),
+        "drawing_json": _rel(hier.get("drawing_json")),   # child construction for the crop
         "detail_level": int(level_key) if level_key else None,
     }
+
+    # A focused local construction summary (brief §9) — a compact, honest
+    # read of how the selected region is built, from the child drawing.
+    drawing_summary = _drawing_summary(hier.get("drawing"))
 
     return {
         "selection_id": selection_id,
@@ -187,4 +215,35 @@ def run_local_analysis(
         "scale":          scale,                             # working px per crop px
         "working_size":   {"width": crop.size[0], "height": crop.size[1]},
         "assets":         assets,
+        "drawing_summary": drawing_summary,
+    }
+
+
+_CAUSE_WORD = {
+    "object_boundary": "an object boundary", "depth": "a depth change",
+    "illumination": "a light/shadow edge", "reflectance": "a colour change",
+    "texture": "surface texture",
+}
+
+
+def _drawing_summary(drawing: dict | None) -> dict | None:
+    """Compact, honest summary of the child drawing construction for the
+    'analyse this area' panel — subject fit, landmark/structure counts, and
+    what the outer edge most likely is (only stated when confident)."""
+    if not drawing:
+        return None
+    bounds = drawing.get("subject_bounds", {}) or {}
+    silh = drawing.get("silhouette") or {}
+    cause = (silh.get("edge_cause") or {})
+    cause_word = None
+    if cause.get("primary") and float(cause.get("confidence", 0) or 0) >= 0.4:
+        cause_word = _CAUSE_WORD.get(cause["primary"], cause["primary"])
+    env = drawing.get("envelope") or {}
+    return {
+        "subject_source":    bounds.get("source"),
+        "occupied_fraction": bounds.get("occupied_fraction"),
+        "n_landmarks":       len(drawing.get("landmarks", []) or []),
+        "envelope_segments": env.get("segment_count"),
+        "n_internal_paths":  len(drawing.get("internal_paths", []) or []),
+        "silhouette_cause":  cause_word,
     }

@@ -533,7 +533,7 @@ export default function ResultsPage() {
                      style={{ border: "1px solid var(--border)" }}>
               <summary className="px-4 py-3 text-xs font-semibold uppercase tracking-widest cursor-pointer select-none"
                        style={{ color: "var(--text-dim)" }}>
-                Tutorial video {videoReady ? "" : "· rendering…"}
+                Tutorial video {videoReady ? "" : isAnalysisReady ? "· rendering…" : "· not available"}
               </summary>
               <div className="px-4 pb-4">
                 {videoReady ? (
@@ -563,7 +563,11 @@ export default function ResultsPage() {
                   <div className="w-full rounded-xl flex items-center justify-center"
                        style={{ background: "var(--surface)", height: 120 }}>
                     <p className="text-sm" style={{ color: "var(--text-dim)" }}>
-                      Video is still rendering — it will appear here.
+                      {/* Honest state: only claim "rendering" while extras are
+                          actually still being generated (analysis_ready). */}
+                      {isAnalysisReady
+                        ? "Video is still rendering — it will appear here."
+                        : "Video isn't available for this project."}
                     </p>
                   </div>
                 )}

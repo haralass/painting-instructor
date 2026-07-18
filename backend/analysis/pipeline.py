@@ -202,19 +202,11 @@ def run_hierarchical_analysis(
     except Exception:
         log.warning("render_study_overlay failed", exc_info=True)
 
-    # ── 5d. Smart dot-to-dot from the edge hierarchy (replaces the classic
-    #      fixed-step dots, which numbered noise on textured photos) ─────────
+    # ── 5d. Dot-to-dot placeholder — the REAL numbered exercise is generated
+    #      after the drawing analysis below (it needs the vector paths); this
+    #      only keeps a fallback if that fails. ──────────────────────────────
     dots_path: str | None = None
-    try:
-        dots_lm = label_maps.get("l3", label_maps.get("l2"))
-        if dots_lm is not None:
-            dots_result = render_smart_dot_to_dot(
-                label_map=dots_lm, W=cache.W, H=cache.H,
-                out_path=out_dir / "dot_to_dot.png",
-            )
-            dots_path = dots_result["path"] if dots_result else None
-    except Exception:
-        log.warning("render_smart_dot_to_dot failed", exc_info=True)
+    dot_variants: dict = {}
 
     # ── 5e. Drawing construction analysis (Phase 3) ──────────────────────────
     # Turn the edges/regions/subject/depth signals into a stored, structured
@@ -240,6 +232,28 @@ def run_hierarchical_analysis(
     except Exception:
         drawing_dict = None
         log.warning("drawing construction analysis failed", exc_info=True)
+
+    # ── 5f. REAL numbered dot-to-dot (brief §14) from the vector paths:
+    #    sequential numbering, dots dense on curves / sparse on straights,
+    #    three difficulties + solution variants. ────────────────────────────
+    if drawing_dict:
+        try:
+            from .dot_to_dot import render_all as render_dot_variants
+            dot_variants = render_dot_variants(drawing_dict, out_dir)
+            if "standard" in dot_variants:
+                dots_path = dot_variants["standard"]["path"]
+        except Exception:
+            log.warning("numbered dot-to-dot failed", exc_info=True)
+    if dots_path is None:
+        # Fallback: the old label-map dots, so the page never goes missing.
+        try:
+            dots_lm = label_maps.get("l3", label_maps.get("l2"))
+            if dots_lm is not None:
+                r = render_smart_dot_to_dot(label_map=dots_lm, W=cache.W, H=cache.H,
+                                            out_path=out_dir / "dot_to_dot.png")
+                dots_path = r["path"] if r else None
+        except Exception:
+            log.warning("render_smart_dot_to_dot fallback failed", exc_info=True)
 
     # ── 6. Write regions JSON ─────────────────────────────────────────────────
     regions_path = out_dir / "regions.json"
@@ -307,5 +321,8 @@ def run_hierarchical_analysis(
         "drawing":             drawing_dict,     # in-process dict for the Phase-4 lesson engine
         "paint_by_numbers":    pbn_path,   # hierarchy-based page (replaces classic when both exist)
         "study_overlay":       study_path, # white region contours ON the reference (detail study)
-        "smart_dot_to_dot":    dots_path,  # edge-hierarchy dots (replaces classic when both exist)
+        "smart_dot_to_dot":    dots_path,  # numbered dot-to-dot page (standard difficulty)
+        "dot_to_dot_variants": {k: {"n_dots": v["n_dots"],
+                                     "path": v["path"], "solution": v.get("solution")}
+                                 for k, v in dot_variants.items()},
     }

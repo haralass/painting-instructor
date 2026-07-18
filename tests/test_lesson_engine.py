@@ -33,18 +33,21 @@ def test_produces_a_valid_lesson():
 
 def test_phases_are_in_the_correct_order():
     L = _gen()
-    phase_order = ["composition", "drawing", "value", "colour", "form", "edges", "detail"]
+    # The real painting order: plan small studies -> place -> draw ALL the
+    # outlines -> block-in (value+colour together) -> develop -> render focal
+    # -> finish. Whole-to-part, never property-by-property.
+    phase_order = ["plan", "composition", "drawing", "block_in", "develop", "render", "finish"]
     seen = [s.phase for s in L.steps]
-    # each phase's first appearance is monotonically non-decreasing in the canonical order
     last = -1
     for ph in seen:
         idx = phase_order.index(ph)
-        assert idx >= last - 0, f"phase {ph} out of order"
+        assert idx >= last, f"phase {ph} out of order"
         last = max(last, idx)
-    # no value/colour/form/edge step before the drawing checkpoint
+    # nothing gets painted before the drawing checkpoint
     draw_cp = next(i for i, s in enumerate(L.steps) if s.checkpoint_id == "cp_silhouette")
     for s in L.steps[:draw_cp]:
-        assert s.phase in ("composition", "drawing"), f"{s.title} paints before the drawing checkpoint"
+        assert s.phase in ("plan", "composition", "drawing"), \
+            f"{s.title} paints before the drawing checkpoint"
 
 
 def test_drawing_checkpoint_gates_before_values():
@@ -55,8 +58,31 @@ def test_drawing_checkpoint_gates_before_values():
     assert silhouette_cp.required
     # it comes before the first value step
     draw_cp_order = next(s.order for s in L.steps if s.checkpoint_id == "cp_silhouette")
-    first_value_order = next((s.order for s in L.steps if s.phase == "value"), 1e9)
-    assert draw_cp_order < first_value_order
+    first_paint_order = next((s.order for s in L.steps if s.phase == "block_in"), 1e9)
+    assert draw_cp_order < first_paint_order
+
+
+def test_shadow_line_is_drawn_before_the_checkpoint_and_any_paint():
+    """User requirement: outlines — including TONAL outlines — are drawing
+    steps, before any paint."""
+    L = _gen()
+    titles = [s.title for s in L.steps]
+    shadow = next(i for i, t in enumerate(titles) if "shadow line" in t.lower())
+    checkpoint = next(i for i, s in enumerate(L.steps) if s.checkpoint_id == "cp_silhouette")
+    first_paint = next(i for i, s in enumerate(L.steps) if s.phase == "block_in")
+    assert shadow < checkpoint < first_paint
+    assert L.steps[shadow].phase == "drawing"
+
+
+def test_block_in_combines_value_and_colour_in_one_pass():
+    """Whole-to-part: value and colour go down together as masses — not one
+    property across the canvas, then the next."""
+    L = _gen()
+    block = next(s for s in L.steps if s.phase == "block_in" and s.title.startswith("Block in"))
+    assert "value and colour" in block.title.lower() or "value and colour" in block.objective.lower()
+    assert "whole" in (block.objective + block.action).lower()
+    # no step teaches colour as a separate whole-canvas phase after values
+    assert not any(s.phase in ("value", "colour") for s in L.steps)
 
 
 def test_every_step_carries_structured_teaching_data():
@@ -100,7 +126,7 @@ def test_medium_changes_execution_not_order():
     oil_structural = [s.title for s in oil.steps if s.phase in ("composition", "drawing")]
     wc_structural = [s.title for s in wc.steps if s.phase in ("composition", "drawing")]
     assert oil_structural == wc_structural
-    phase_order = ["composition", "drawing", "value", "colour", "form", "edges", "detail"]
+    phase_order = ["plan", "composition", "drawing", "block_in", "develop", "render", "finish"]
     for L in (oil, wc):
         idxs = [phase_order.index(s.phase) for s in L.steps]
         assert idxs == sorted(idxs), f"phase order broken for medium {L.medium}"
@@ -117,18 +143,17 @@ def test_watercolor_reserves_whites_oil_does_not():
     assert any(s.title == "Reserve the whites" for s in wc.steps)
     assert not any(s.title == "Reserve the whites" for s in oil.steps)
     reserve = next(s for s in wc.steps if s.title == "Reserve the whites")
-    assert reserve.phase == "value"
+    assert reserve.phase == "block_in"
     assert reserve.completion_check is not None and reserve.common_mistake
-    # it comes before the light/shadow split, at the very start of the value phase
-    split = next(s for s in wc.steps if "light and shadow" in s.title.lower())
-    assert reserve.order < split.order
+    # it comes before the block-in pass itself
+    block = next(s for s in wc.steps if s.title.startswith("Block in"))
     prepare_surface = next(s for s in wc.steps if s.title == "Prepare the surface")
-    assert prepare_surface.order < reserve.order < split.order
+    assert prepare_surface.order < reserve.order < block.order
 
 
 def test_watercolor_value_step_is_strictly_light_to_dark_and_dry_judged():
     wc = _gen("watercolor")
-    value_step = next(s for s in wc.steps if s.title.startswith("Simplify to"))
+    value_step = next(s for s in wc.steps if s.title.startswith("Block in"))
     text = value_step.action.lower()
     assert "light-to-dark" in text or "light to dark" in text
     assert "dried" in text or "dry" in text
@@ -145,7 +170,7 @@ def test_oil_keeps_imprimatura_and_notes_fat_over_lean():
 
 def test_acrylic_notes_sections_premixing_and_glazing():
     acrylic = _gen("acrylic")
-    value_step = next(s for s in acrylic.steps if s.title.startswith("Simplify to"))
+    value_step = next(s for s in acrylic.steps if s.title.startswith("Block in"))
     text = value_step.action.lower()
     assert "section" in text
     assert "pre-mix" in text or "premix" in text
@@ -160,7 +185,7 @@ def test_pencil_and_charcoal_replace_mixtures_with_value_range():
         assert "Prepare the working mixtures" not in titles, f"{medium} should not mix paint"
         assert "Set your value range" in titles
         value_range = next(s for s in L.steps if s.title == "Set your value range")
-        assert value_range.phase == "value"
+        assert value_range.phase == "block_in"
         assert "3 value masses" in value_range.objective or "three value masses" in value_range.objective.lower()
     # every other medium still mixes real paint/colour
     for medium in ("oil", "watercolor", "acrylic", "digital"):
@@ -183,7 +208,7 @@ def test_charcoal_value_range_step_tones_then_lifts():
 
 def test_digital_uses_selections_not_layer_per_object():
     digital = _gen("digital")
-    value_step = next(s for s in digital.steps if s.title.startswith("Simplify to"))
+    value_step = next(s for s in digital.steps if s.title.startswith("Block in"))
     text = value_step.action.lower()
     assert "selection" in text or "mask" in text
     assert "layer per object" in text or "layer-per-object" in text
@@ -211,8 +236,8 @@ def test_all_mediums_produce_a_valid_graph_at_every_guidance_level():
             # drawing checkpoint survives every guidance level, and still gates before values
             assert any(c.type == "silhouette" for c in L.checkpoints)
             draw_cp_order = next(s.order for s in L.steps if s.checkpoint_id == "cp_silhouette")
-            first_value_order = next((s.order for s in L.steps if s.phase == "value"), 1e9)
-            assert draw_cp_order < first_value_order
+            first_paint_order = next((s.order for s in L.steps if s.phase == "block_in"), 1e9)
+            assert draw_cp_order < first_paint_order
 
 
 def test_skill_maps_to_guidance():

@@ -96,6 +96,42 @@ def _polygon(cnt: np.ndarray) -> list[tuple[float, float]]:
     return [(round(float(x), 1), round(float(y), 1)) for x, y in cnt]
 
 
+def _min_spacing(points: np.ndarray, d_min: float) -> np.ndarray:
+    """Drop points closer than d_min to the previously kept one, so busy
+    contours come out with readable, drawable spacing (the user's ask: on
+    detailed photos, INCREASE the distances so the outline reads)."""
+    if len(points) <= 3:
+        return points
+    kept = [points[0]]
+    for p in points[1:]:
+        if math.hypot(p[0] - kept[-1][0], p[1] - kept[-1][1]) >= d_min:
+            kept.append(p)
+    if len(kept) < 3:
+        return points
+    return np.array(kept, dtype=points.dtype)
+
+
+def _busyness(cache) -> float:
+    """0..1 — how cluttered the photo is (fraction of strong-gradient pixels).
+    Busy photos get MORE simplification so contours stay readable."""
+    g = cache.grad
+    return float((g > max(1e-6, float(g.mean())) * 1.5).mean())
+
+
+# Artistic contour levels → (epsilon fraction of perimeter, min spacing
+# fraction of max side). Busy photos scale both up (see _busy_mult).
+_CONTOUR_LEVELS: dict[str, tuple[float, float]] = {
+    "simple":   (0.020, 0.030),
+    "standard": (0.008, 0.015),
+    "refined":  (0.003, 0.006),
+}
+
+
+def _busy_mult(busy: float) -> float:
+    """1.0 for clean photos up to ~2.2 for very cluttered ones."""
+    return 1.0 + 2.0 * max(0.0, busy - 0.10)
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 def build_drawing_analysis(
@@ -205,18 +241,28 @@ def build_drawing_analysis(
             lesson_order=order,
         )
 
-    # ── 4. Silhouette + envelope (fine vs coarse simplification) ──────────────
+    # ── 4. Silhouette (3 artistic levels) + envelope ──────────────────────────
+    # Busy photos get more simplification + bigger point spacing automatically,
+    # so the contour "comes out" readable instead of a tangle (user feedback).
+    busy = _busyness(cache)
+    mult = _busy_mult(busy)
+    max_side = float(max(H, W))
     silhouette = None
+    silhouette_levels: dict[str, VectorPath] = {}
     envelope = None
     if contour is not None and len(contour) >= 4:
         peri = cv2.arcLength(contour.astype(np.int32), True)
-        # Refined silhouette: fine epsilon (accurate curve).
-        fine = cv2.approxPolyDP(contour.astype(np.int32), 0.004 * peri, True).reshape(-1, 2)
-        silhouette = VectorPath(
-            id=_nid("path"), category="silhouette", points=_polygon(fine),
-            closed=True, hierarchy_level=1, importance=1.0, persistence=1.0,
-            stage="silhouette", lesson_order=0,
-        )
+        for level, (eps_frac, spacing_frac) in _CONTOUR_LEVELS.items():
+            approx = cv2.approxPolyDP(
+                contour.astype(np.int32), eps_frac * mult * peri, True
+            ).reshape(-1, 2).astype(np.float32)
+            approx = _min_spacing(approx, spacing_frac * mult * max_side)
+            silhouette_levels[level] = VectorPath(
+                id=_nid("path"), category="silhouette", points=_polygon(approx),
+                closed=True, hierarchy_level=1, importance=1.0, persistence=1.0,
+                stage="silhouette", lesson_order=0,
+            )
+        silhouette = silhouette_levels["standard"]
         # Envelope: coarse epsilon (few big segments), stored separately.
         coarse = cv2.approxPolyDP(contour.astype(np.int32), 0.03 * peri, True).reshape(-1, 2)
         env_verts = _polygon(coarse)
@@ -227,6 +273,39 @@ def build_drawing_analysis(
             id=_nid("env"), vertices=env_verts, segment_count=len(env_verts),
             landmark_ids=env_landmarks,
         )
+
+    # ── 4b. Tonal outlines — the "shadow line" (user feedback: outlines for
+    #    the tones were missing). Value-zone boundaries inside the subject,
+    #    simplified with the same busy-aware spacing, so the block-in fills
+    #    ready-drawn shapes. ────────────────────────────────────────────────
+    tonal_paths: list[VectorPath] = []
+    if zone_map is not None and zone_map.shape == (H, W):
+        eps_frac, spacing_frac = _CONTOUR_LEVELS["standard"]
+        min_area = 0.005 * H * W
+        for zone_id in np.unique(zone_map):
+            zmask = ((zone_map == zone_id) & (mask > 0)).astype(np.uint8)
+            if zmask.sum() < min_area:
+                continue
+            zmask = cv2.morphologyEx(zmask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+            cnts, _ = cv2.findContours(zmask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+            cnts = sorted(cnts, key=cv2.contourArea, reverse=True)[:3]
+            for c in cnts:
+                if cv2.contourArea(c) < min_area:
+                    continue
+                approx = cv2.approxPolyDP(
+                    c, eps_frac * mult * cv2.arcLength(c, True), True
+                ).reshape(-1, 2).astype(np.float32)
+                approx = _min_spacing(approx, spacing_frac * mult * max_side)
+                if len(approx) < 3:
+                    continue
+                tonal_paths.append(VectorPath(
+                    id=_nid("path"), category="tonal_boundary", points=_polygon(approx),
+                    closed=True, hierarchy_level=2,
+                    importance=round(min(1.0, cv2.contourArea(c) / (H * W) * 4), 3),
+                    stage="shadow_line", lesson_order=0, value_zone=int(zone_id),
+                ))
+        tonal_paths.sort(key=lambda p: p.importance, reverse=True)
+        tonal_paths = tonal_paths[:10]   # the big tonal shapes, not confetti
 
     # ── 5. Negative spaces (bbox ∩ ¬subject connected components) ─────────────
     negative_spaces: list[NegativeSpace] = []
@@ -334,8 +413,11 @@ def build_drawing_analysis(
         main_axis=main_axis, dominant_slopes=dominant_slopes,
         landmarks=landmarks, negative_spaces=negative_spaces,
         proportion_checks=proportion_checks, envelope=envelope,
-        silhouette=silhouette, internal_paths=internal_paths,
-        parameters={"silhouette_epsilon_frac": 0.004, "envelope_epsilon_frac": 0.03},
+        silhouette=silhouette, silhouette_levels=silhouette_levels,
+        tonal_paths=tonal_paths, internal_paths=internal_paths,
+        parameters={"contour_levels": {k: list(v) for k, v in _CONTOUR_LEVELS.items()},
+                    "envelope_epsilon_frac": 0.03,
+                    "busyness": round(busy, 3), "busy_multiplier": round(mult, 2)},
         generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
     )
     analysis.construction_order = _build_construction_order(analysis)
@@ -402,6 +484,10 @@ def _build_construction_order(a: DrawingAnalysis) -> list[ConstructionStage]:
     stage("secondary_structure", "Secondary structural lines",
           "Add secondary structural lines where they genuinely help the drawing read.",
           path_ids=[p.id for p in a.internal_paths if p.category == "secondary_structure"])
+    stage("shadow_line", "Outline the tones (shadow line)",
+          "Draw the boundaries of the big light and shadow shapes ON the drawing — "
+          "so the painting fills ready-made shapes instead of guessing them.",
+          path_ids=[p.id for p in a.tonal_paths])
     stage("checkpoint", "Drawing checkpoint",
           "Stop and compare the whole drawing against the reference before any value or colour.",
           is_checkpoint=True)

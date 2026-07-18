@@ -17,8 +17,10 @@ import { buildStageSvgById, GUIDE_CAPS, type Guidance } from "../lib/constructio
 type LessonStep = NonNullable<Manifest["lesson"]>["steps"][number];
 
 const PHASE_LABEL: Record<string, string> = {
-  composition: "Composition", drawing: "Drawing", value: "Value",
-  colour: "Colour", form: "Form", edges: "Edges", detail: "Detail",
+  plan: "Plan", composition: "Composition", drawing: "Drawing",
+  block_in: "Block-in", develop: "Develop", render: "Render", finish: "Finish",
+  // legacy lessons
+  value: "Value", colour: "Colour", form: "Form", edges: "Edges", detail: "Detail",
 };
 
 export default function GuidedLessonPlayer({

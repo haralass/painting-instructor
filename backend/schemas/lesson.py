@@ -15,16 +15,20 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 
-# The teaching hierarchy, in priority order (brief §3): structural phases
-# always come before value, colour, form and edge refinement.
+# The teaching flow, whole-to-part (how painters actually work): plan small
+# studies off-canvas, draw the outlines FIRST (envelope → silhouette →
+# internal → shadow line), then paint in whole-canvas passes — block-in
+# (value+colour together), develop, render (focal only) — and finish.
 LessonPhase = Literal[
-    "composition",   # crop, placement, subject bounds, axes, negative space
-    "drawing",       # envelope, silhouette, landmarks, proportion
-    "value",         # value families and simplification
-    "colour",        # working mixtures, colour masses
-    "form",          # halftones, form/cast shadow, temperature modelling
-    "edges",         # hard/soft/lost hierarchy
-    "detail",        # selected details and accents
+    "plan",          # thumbnails, small notan study, palette plan (off-canvas)
+    "composition",   # crop, placement, subject bounds, axes  (legacy alias kept)
+    "drawing",       # envelope, silhouette, internal + tonal outlines, proportion
+    "block_in",      # first whole-canvas pass: big masses, value+colour together
+    "develop",       # second pass: medium shapes, form, temperature
+    "render",        # third pass: focal only — edges, detail, accents
+    "finish",        # final check + upload for critique
+    # legacy phases (older lessons still parse):
+    "value", "colour", "form", "edges", "detail",
 ]
 
 CheckpointType = Literal[

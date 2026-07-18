@@ -739,6 +739,13 @@ def _build_manifest(
         # Phase 3: structured drawing-construction analysis (bounds, landmarks,
         # envelope, silhouette, internal paths, pedagogical construction order).
         "drawing_json": rel_to_outputs(hier.get("drawing_json")),
+        # §14 numbered dot-to-dot variants (difficulty → page + solution).
+        "dot_to_dot_variants": {
+            k: {"n_dots": v.get("n_dots"),
+                "path": rel_to_outputs(v.get("path")),
+                "solution": rel_to_outputs(v.get("solution"))}
+            for k, v in (hier.get("dot_to_dot_variants") or {}).items()
+        },
         "palette":        _palette_with_recipes(hier.get("palette", []), medium, brand_id),
         "colour_families":hier.get("colour_families", []),
         "value_zones":    hier.get("value_zone_list", []),

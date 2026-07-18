@@ -215,22 +215,42 @@ def generate_lesson(
     focal = brief.get("focal")
     n_values = len(value_zones) or 5
 
-    # ── PHASE A — Composition & placement ─────────────────────────────────────
-    cp_place = b.checkpoint("placement", "Placement checkpoint",
-                            "Before drawing anything inside the subject, check its size and position "
-                            "on the canvas against the reference.")
+    # ══ PLAN — small studies OFF the canvas (whole-to-part starts here) ══════
     if canvas_ratio:
         b.step(
-            capability_id="composition", phase="composition", importance="pivotal",
+            capability_id="composition", phase="plan", importance="pivotal",
             title="Set the canvas and crop",
             objective=f"Match the reference crop: a canvas of ratio {canvas_ratio:.2f} (width ÷ height).",
-            action="Draw the outer rectangle of your canvas at this ratio before anything else.",
+            action="Decide the crop now and cut/tape your surface to this ratio before anything else.",
             explanation="The crop is a composition decision — fix it now so every proportion you "
                         "measure later is measured against the right rectangle.",
             overlays=[_svg_overlay("canvas")],
             completion=_confirm("Your canvas matches the reference proportions."),
             mistake="Starting on a canvas of the wrong shape, then cramping the subject to fit.",
         )
+    dark_frac = brief.get("dark_fraction")
+    split_note = ("" if dark_frac is None
+                  else f" About {int(dark_frac*100)}% of this image reads as shadow — "
+                       "keep that balance.")
+    zone_labels = ", ".join(z.get("label", "") for z in value_zones[:n_values]) or "shadow → light"
+    b.step(
+        capability_id="notan", phase="plan", importance="pivotal",
+        title=f"Simplify to {n_values} values — small study first",
+        objective=f"On a small piece of paper (not the canvas), resolve the picture into "
+                  f"{n_values} value steps ({zone_labels}).",
+        action="Squint until the image collapses into a few big tones, then paint/shade a "
+               "postcard-size study in those values only. Every mistake you make here is one you "
+               "won't make on the real surface." + split_note,
+        overlays=[OverlayRef(kind="value_mask", asset=assets.get("value_zones_map"))],
+        completion=_confirm("Your small study reads correctly from across the room."),
+        mistake="Skipping the study and discovering the value design is wrong mid-painting.",
+        stop="Do not touch the canvas until the small study reads.",
+    )
+
+    # ══ COMPOSITION ON CANVAS — placement before any line inside ═════════════
+    cp_place = b.checkpoint("placement", "Placement checkpoint",
+                            "Before drawing anything inside the subject, check its size and position "
+                            "on the canvas against the reference.")
     b.step(
         capability_id="composition", phase="composition", importance="pivotal",
         title="Place the subject",
@@ -263,7 +283,8 @@ def generate_lesson(
         mistake="Skipping the axis and letting the drawing slowly tilt off-vertical.",
     )
 
-    # ── PHASE B — Drawing & structure (progressive contour) ───────────────────
+    # ══ DRAWING — ALL the outlines, first: envelope → silhouette → internal →
+    #    tonal (shadow line). Nothing gets painted over an unchecked drawing. ═
     cp_prop = b.checkpoint("proportion", "Proportion checkpoint",
                            "Compare the big proportions and negative spaces to the reference before "
                            "you refine a single edge.")
@@ -313,7 +334,9 @@ def generate_lesson(
         capability_id="drawing_construction", phase="drawing", importance="pivotal",
         title="Refine the outer silhouette",
         objective="Turn the straight envelope into the accurate outer contour.",
-        action="Replace the envelope segments with the true curves of the silhouette.",
+        action="Replace the envelope segments with the true curves of the silhouette. Pick the "
+               "contour level that suits you — Main structure, Standard, or Refined — busy photos "
+               "are automatically simplified so the outline stays drawable.",
         overlays=[_svg_overlay("silhouette")],
         completion=_confirm("The outer contour is accurate all the way round."),
         mistake="Adding interior detail before the outer shape is finished.",
@@ -337,83 +360,55 @@ def generate_lesson(
         completion=_confirm("Secondary structure is in, without over-drawing."),
         mistake="Treating every detected edge as a line to draw.",
     )
-    cp_draw = b.checkpoint("silhouette", "Drawing checkpoint — before any value",
+    b.step(
+        capability_id="drawing_construction", phase="drawing", importance="pivotal",
+        title="Outline the tones (shadow line)",
+        objective="Draw the boundaries of the big light and shadow shapes ON the drawing, "
+                  "matching your small value study.",
+        action="Trace the shadow line — where light ends and shadow begins — and the other big "
+               "tonal boundaries, lightly, inside the silhouette. The painting will fill these "
+               "ready-made shapes.",
+        explanation="This is the classical step photos of finished outlines skip: with the tonal "
+                    "shapes drawn, the block-in becomes filling shapes you trust instead of "
+                    "guessing values against white.",
+        overlays=[_svg_overlay("shadow_line")],
+        completion=_confirm("The big tonal shapes are outlined and match the small study."),
+        mistake="Skipping the shadow line, then hunting for the value boundaries with a loaded brush.",
+    )
+    cp_draw = b.checkpoint("silhouette", "Drawing checkpoint — before any paint",
                            "Compare the whole drawing to the reference — placement, silhouette, "
-                           "proportion — and fix the most important error BEFORE you touch value or "
-                           "colour. Upload a photo of your drawing for a prioritized correction.")
+                           "proportion, tonal shapes — and fix the most important error BEFORE any "
+                           "paint. Upload a photo of your drawing for a prioritized correction.")
     b.step(
         capability_id="drawing_construction", phase="drawing", importance="pivotal",
         title="Drawing checkpoint",
-        objective="Validate the whole drawing before moving to value.",
+        objective="Validate the whole drawing before any paint.",
         action="Step back, compare to the reference, and correct the single most important structural "
                "error. Then photograph your drawing to check it.",
-        explanation="Values and colour painted over a wrong drawing only make the error permanent — "
-                    "this is the one checkpoint you must not skip.",
+        explanation="Paint over a wrong drawing only makes the error permanent — this is the one "
+                    "checkpoint you must not skip.",
         overlays=[_svg_overlay("checkpoint")],
-        completion=_upload("Your drawing's placement, silhouette and proportion match the reference."),
+        completion=_upload("Your drawing's placement, silhouette, proportion and tonal shapes match "
+                           "the reference."),
         mistake="Rushing into paint because the drawing is 'close enough'.",
-        stop="Do not start value until the drawing is corrected.",
+        stop="Do not start painting until the drawing is corrected.",
         checkpoint_id=cp_draw,
     )
 
-    # ── PHASE C — Value & painting foundation ─────────────────────────────────
-    cp_val = b.checkpoint("values", "Value checkpoint",
-                          "Check your value masses read correctly in black and white before colour.")
+    # ══ BLOCK-IN — first whole-canvas pass: value AND colour together ═════════
     b.step(
-        capability_id="notan", phase="value",
+        capability_id="notan", phase="block_in",
         title="Prepare the surface",
         objective=f"Set up the surface for {medium}.",
         action=_exec(medium, "surface"),
         completion=_confirm("The surface is ready and you're no longer judging against pure white."),
         mistake="Judging your first values against a blank white surface.",
     )
-    if medium == "watercolor":
-        # Watercolour is subtractive — the whites are the paper, not paint, and
-        # once a wash covers one there is no painting it back. This has to be
-        # decided before any light/shadow split, let alone a wash goes down.
-        b.step(
-            capability_id="notan", phase="value", importance="pivotal",
-            title="Reserve the whites",
-            objective="Identify and protect every area that must stay paper-white before any wash "
-                      "touches the paper.",
-            action="Mark every highlight and white area now — with a light pencil line, or masking "
-                   "fluid/frisket if you want a hard edge there. Once a wash covers the paper, that "
-                   "white is gone for good.",
-            overlays=[OverlayRef(kind="value_mask", asset=assets.get("value_zones_map"))],
-            completion=_confirm("Every area meant to stay white is marked or masked before the first wash."),
-            mistake="Discovering a missed highlight only after a wash has already covered it.",
-        )
-    dark_frac = brief.get("dark_fraction")
-    split_note = ("" if dark_frac is None
-                  else f" About {int(dark_frac*100)}% of this image reads as shadow — "
-                       "keep that balance.")
-    b.step(
-        capability_id="notan", phase="value", importance="pivotal",
-        title="Separate the biggest light and shadow families",
-        objective="Divide the whole subject into just two families: light and shadow.",
-        action="Squint until the picture collapses to two values, then map the shadow shape as one mass."
-               + split_note,
-        overlays=[OverlayRef(kind="value_mask", asset=assets.get("value_zones_map"))],
-        completion=_confirm("The shadow family reads as one connected shape."),
-        mistake="Chasing individual small darks instead of the one big shadow shape.",
-    )
-    zone_labels = ", ".join(z.get("label", "") for z in value_zones[:n_values]) or "shadow → light"
-    b.step(
-        capability_id="notan", phase="value", importance="pivotal",
-        title=f"Simplify to {n_values} values",
-        objective=f"Resolve the picture into {n_values} clear value steps ({zone_labels}).",
-        action=_exec(medium, "value"),
-        overlays=[OverlayRef(kind="value_mask", asset=assets.get("value_zones_map"))],
-        completion=_confirm("The whole picture reads correctly in these value steps."),
-        mistake="Too many half-tones so the value structure turns to mud.",
-        checkpoint_id=cp_val,
-    )
     if medium in ("pencil", "charcoal"):
-        # There is no paint to mix — the equivalent groundwork is deciding the
-        # value range itself, so this step replaces "mixtures" rather than
-        # reusing its wording.
+        # No paint to mix — the equivalent groundwork is deciding the value
+        # range itself, so this replaces "mixtures" rather than reusing it.
         b.step(
-            capability_id="notan", phase="value",
+            capability_id="notan", phase="block_in",
             title="Set your value range",
             objective="Establish 3 value masses — your lightest light, midtone and darkest dark — "
                       "before rendering any single form.",
@@ -424,38 +419,62 @@ def generate_lesson(
     else:
         mixture_names = ", ".join(p.get("name", "") for p in palette[:6]) if palette else ""
         b.step(
-            capability_id="color_palette", phase="value",
+            capability_id="color_palette", phase="block_in",
             title="Prepare the working mixtures",
-            objective="Mix the main colour strings you'll paint with.",
+            objective="Mix the main colour strings you'll paint with — one per tonal shape.",
             action=_exec(medium, "mixture") + (f" Your main colours: {mixture_names}." if mixture_names else ""),
             mixture=mixture_names or None,
-            completion=_confirm("Your main mixtures are ready before you start blocking colour."),
+            completion=_confirm("Your main mixtures are ready before you start blocking in."),
             mistake="Mixing every colour from scratch on the canvas, so nothing stays consistent.",
         )
-    if masses:
-        first = masses[0]
+    if medium == "watercolor":
+        # Watercolour is subtractive — the whites are the paper, and once a
+        # wash covers one there is no painting it back. Decide before any wash.
         b.step(
-            capability_id="color_by_number", phase="colour", importance="pivotal",
-            title="Place the largest colour masses",
-            objective="Block in the biggest masses flat, in the right value and colour.",
-            action=f"Start with the largest mass — the {first.get('colour_name','main')} "
-                   f"{first.get('value_label','')} in the {first.get('location','picture')} — and cover "
-                   "the canvas with flat masses before any blending.",
-            overlays=[OverlayRef(kind="colour_regions", asset=assets.get("colours"))],
-            completion=_confirm("Every area is covered with a flat mass — no white canvas showing."),
-            mistake="Rendering one corner to a finish while the rest is bare — you can't judge colour "
-                    "relationships against white.",
+            capability_id="notan", phase="block_in", importance="pivotal",
+            title="Reserve the whites",
+            objective="Identify and protect every area that must stay paper-white before any wash "
+                      "touches the paper.",
+            action="Mark every highlight and white area now — with a light pencil line, or masking "
+                   "fluid/frisket if you want a hard edge there. Once a wash covers the paper, that "
+                   "white is gone for good.",
+            overlays=[OverlayRef(kind="value_mask", asset=assets.get("value_zones_map"))],
+            completion=_confirm("Every area meant to stay white is marked or masked before the first wash."),
+            mistake="Discovering a missed highlight only after a wash has already covered it.",
         )
-
-    # ── PHASE D — Form & modelling ────────────────────────────────────────────
-    cp_col = b.checkpoint("colour_masses", "Colour-mass checkpoint",
-                          "Check the big colour and temperature relationships before you model form.")
+    cp_block = b.checkpoint("colour_masses", "Block-in checkpoint",
+                            "The whole canvas should be covered in flat masses that read correctly "
+                            "in value AND colour before you model anything.")
+    first = masses[0] if masses else None
+    first_note = (f" Start with the largest mass — the {first.get('colour_name','main')} "
+                  f"{first.get('value_label','')} in the {first.get('location','picture')}."
+                  if first else "")
     b.step(
-        capability_id="color_by_number", phase="form",
+        capability_id="color_by_number", phase="block_in", importance="pivotal",
+        title="Block in the big masses — value and colour together",
+        objective="Fill the tonal shapes you outlined with flat masses of the right value AND "
+                  "colour, across the WHOLE canvas.",
+        action="Fill each outlined shape with one flat mixture — no blending, no detail — until "
+               "no bare surface shows. " + _exec(medium, "value") + first_note,
+        explanation="Value and colour go down together as one decision per shape: you judge every "
+                    "mass against its neighbours, never against white canvas.",
+        overlays=[_svg_overlay("shadow_line"),
+                  OverlayRef(kind="colour_regions", asset=assets.get("colours"))],
+        completion=_confirm("Every area is covered with a flat mass — the whole canvas reads as big "
+                            "shapes of the right value and colour."),
+        mistake="Rendering one corner to a finish while the rest is bare — whole-to-part, always.",
+        stop="Stop before blending or any detail until the whole canvas is covered.",
+        checkpoint_id=cp_block,
+    )
+
+    # ══ DEVELOP — second whole-canvas pass: medium shapes, form, temperature ═
+    b.step(
+        capability_id="color_by_number", phase="develop", importance="pivotal",
         title="Model the form",
-        objective="Add the halftones and transitions that turn flat masses into form.",
-        action="Work the transitions between light and shadow; separate form shadow from cast shadow "
-               "where the reference shows it." + _form_phase_note(medium),
+        objective="Add the halftones and transitions that turn flat masses into form — everywhere, "
+                  "not in one corner.",
+        action="Work the transitions between light and shadow across the whole picture; separate "
+               "form shadow from cast shadow where the reference shows it." + _form_phase_note(medium),
         completion=_confirm("The main forms read as solid, not flat."),
         mistake="Blending everything smooth so the form goes soft and the drawing is lost.",
     )
@@ -464,21 +483,20 @@ def generate_lesson(
                  "against those, not against a rule." if warm and cool else
                  " Judge each temperature shift against the reference, not against a fixed rule.")
     b.step(
-        capability_id="color_temperature", phase="form", importance="pivotal",
+        capability_id="color_temperature", phase="develop",
         title="Refine local colour and temperature",
         objective="Adjust the colour and temperature relationships to match the reference.",
         action="Refine each mass's hue and temperature against its neighbours." + temp_note,
         completion=_confirm("Colour and temperature relationships match the reference."),
         mistake="Applying 'warm light, cool shadow' as a law when this image does something else.",
-        checkpoint_id=cp_col,
     )
 
-    # ── PHASE E — Edges & completion ──────────────────────────────────────────
+    # ══ RENDER — third pass, FOCAL ONLY: edges, detail, accents ═══════════════
     focal_loc = focal.get("location") if focal else None
     b.step(
-        capability_id="composition", phase="edges", importance="pivotal",
+        capability_id="composition", phase="render", importance="pivotal",
         title="Identify the focal area",
-        objective="Decide where the eye should land first.",
+        objective="Decide where the eye should land first — only that area gets fully rendered.",
         action=(f"Commit to the focal area (the reference's is around the {focal_loc}) and plan to keep "
                 "your sharpest, highest-contrast note there." if focal_loc
                 else "Commit to one focal area and plan your sharpest note there."),
@@ -486,16 +504,16 @@ def generate_lesson(
         mistake="Letting two areas compete so the eye doesn't know where to go.",
     )
     b.step(
-        capability_id="edge_coach", phase="edges", importance="pivotal",
+        capability_id="edge_coach", phase="render", importance="pivotal",
         title="Establish the edge hierarchy",
-        objective="Set hard, soft and lost edges so sharpness leads the eye.",
+        objective="Set hard, soft and lost edges so sharpness leads the eye to the focal area.",
         action=_exec(medium, "edges"),
         overlays=[OverlayRef(kind="edge_guides", asset=assets.get("edges"))],
         completion=_confirm("The hardest edges cluster on the focal point; edges soften away from it."),
         mistake="Equal-sharpness edges everywhere, so nothing is emphasised.",
     )
     b.step(
-        capability_id="edge_coach", phase="edges", importance="micro",
+        capability_id="edge_coach", phase="render", importance="micro",
         title="Reduce unnecessary edges",
         objective="Lose the edges that don't earn their place.",
         action="Soften or drop edges in the shadows and away from the focal area.",
@@ -503,18 +521,20 @@ def generate_lesson(
         mistake="Keeping every edge because it's 'there' in the reference.",
     )
     b.step(
-        capability_id="drawing_construction", phase="detail", importance="micro",
+        capability_id="drawing_construction", phase="render", importance="micro",
         title="Add selected details",
-        objective="Add only the details that serve the focal point.",
+        objective="Add only the details that serve the focal point — the rest stays loose.",
         action="Place your small detail on and near the focal area; leave the rest implied.",
         completion=_confirm("Detail is concentrated where the eye lands, not spread evenly."),
         mistake="Detailing everywhere, which flattens the focal hierarchy you just built.",
     )
+
+    # ══ FINISH ════════════════════════════════════════════════════════════════
     cp_final = b.checkpoint("final", "Final checkpoint",
                             "Photograph the finished painting and upload it for a prioritized "
                             "correction against the reference.")
     b.step(
-        capability_id="critique", phase="detail", importance="pivotal",
+        capability_id="critique", phase="finish", importance="pivotal",
         title="Final accents, then check your work",
         objective="Add the final accents and highlights, then compare to the reference.",
         action="Place the lightest lights and darkest darks last, on the focal point. Then photograph "
@@ -525,6 +545,6 @@ def generate_lesson(
     )
 
     return Lesson(
-        id="lesson_v2", capability_id="lesson_plan", medium=medium,
+        id="lesson_v3", capability_id="lesson_plan", medium=medium,
         guidance=guidance, steps=b.steps, checkpoints=b.checkpoints,
     )

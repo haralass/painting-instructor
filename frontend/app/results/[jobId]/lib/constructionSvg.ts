@@ -12,13 +12,24 @@ export const C = {
 };
 
 export type Guidance = "full" | "balanced" | "autonomy";
+// Artistic contour simplification (no CV jargon): which stored silhouette
+// level to draw. Busy photos are already auto-simplified server-side.
+export type ContourLevel = "simple" | "standard" | "refined";
+export const CONTOUR_LABELS: Record<ContourLevel, string> = {
+  simple: "Main structure", standard: "Standard", refined: "Refined",
+};
 export const GUIDE_CAPS: Record<Guidance, { landmarks: number; internal: number; slopes: number }> = {
   full:     { landmarks: 99, internal: 40, slopes: 8 },
   balanced: { landmarks: 8,  internal: 15, slopes: 4 },
   autonomy: { landmarks: 6,  internal: 6,  slopes: 3 },
 };
 
-type Caps = { landmarks: number; internal: number; slopes: number };
+type Caps = { landmarks: number; internal: number; slopes: number; contour?: ContourLevel };
+
+function pickSilhouette(d: DrawingAnalysis, caps: Caps) {
+  const lvl = caps.contour ?? "standard";
+  return (d.silhouette_levels && d.silhouette_levels[lvl]) || d.silhouette || null;
+}
 
 /** SVG showing construction stages 0..stepIndex, current emphasised. */
 export function buildConstructionSvg(d: DrawingAnalysis, stepIndex: number, caps: Caps): string {
@@ -107,9 +118,11 @@ function stageSvg(s: DrawStage, d: DrawingAnalysis, ctx: Ctx): string {
           p.push(line(pc.reference_points[0], pc.reference_points[1], cur(C.sage), sw * 0.7, `${sw * 1.5} ${sw}`));
       });
       break;
-    case "silhouette":
-      if (d.silhouette && d.silhouette.points.length >= 2) p.push(poly(d.silhouette.points, cur(C.ink), sw * 1.4));
+    case "silhouette": {
+      const sil = pickSilhouette(d, caps);
+      if (sil && sil.points.length >= 2) p.push(poly(sil.points, cur(C.ink), sw * 1.4));
       break;
+    }
     case "internal_divisions":
     case "secondary_structure": {
       const want = s.id === "internal_divisions" ? "internal_division" : "secondary_structure";
@@ -121,9 +134,23 @@ function stageSvg(s: DrawStage, d: DrawingAnalysis, ctx: Ctx): string {
         });
       break;
     }
-    case "checkpoint":
-      if (d.silhouette) p.push(poly(d.silhouette.points, C.ink, sw * 1.4));
+    case "shadow_line":
+      // Tonal outlines — the classical "shadow line": value-zone boundaries
+      // drawn ON the drawing so the block-in fills ready-made shapes.
+      (d.tonal_paths ?? []).forEach(tp => {
+        if (tp.points.length >= 3)
+          p.push(poly(tp.points, cur(C.cool), sw * 0.9, "none", `${sw * 2.2} ${sw * 1.2}`));
+      });
       break;
+    case "checkpoint": {
+      const silC = pickSilhouette(d, caps);
+      if (silC) p.push(poly(silC.points, C.ink, sw * 1.4));
+      (d.tonal_paths ?? []).forEach(tp => {
+        if (tp.points.length >= 3)
+          p.push(poly(tp.points, C.cool, sw * 0.7, "none", `${sw * 2.2} ${sw * 1.2}`));
+      });
+      break;
+    }
   }
   return p.join("");
 }

@@ -50,7 +50,28 @@ app.add_middleware(
 # ── Static file serving ───────────────────────────────────────────────────────
 OUTPUTS_DIR = outputs_root()
 OUTPUTS_DIR.mkdir(exist_ok=True)
-app.mount("/outputs", StaticFiles(directory=str(OUTPUTS_DIR)), name="outputs")
+
+
+class _CorpStaticFiles(StaticFiles):
+    """Serve /outputs with Cross-Origin-Resource-Policy: cross-origin.
+
+    The reference image and analysis assets are served from the API origin
+    (:8000) but consumed on the frontend origin (:3000), including inside the
+    OpenSeadragon WebGL viewer and canvas readbacks (label-map decode, mask
+    overlays). Without CORP the browser blocks the cross-origin resource in
+    those contexts (net::ERR_FAILED) — and a plain <img> pre-caching the same
+    URL without CORS poisons the cache for the viewer's later CORS request.
+    Setting CORP (alongside the app's CORS middleware) makes every asset
+    usable in every context, cache mode included."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
+        response.headers["Vary"] = "Origin"
+        return response
+
+
+app.mount("/outputs", _CorpStaticFiles(directory=str(OUTPUTS_DIR)), name="outputs")
 
 UPLOAD_DIR = OUTPUTS_DIR / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)

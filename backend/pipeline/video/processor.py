@@ -24,11 +24,15 @@ unchanged either way; only what gets displayed and labelled changes.
 
 The video is MP4, default 1080px wide, 24 fps.
 """
+import logging
+
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import cv2
 
 from ...utils.fonts import get_font as _font
+
+log = logging.getLogger(__name__)
 
 FPS       = 24
 OUT_W     = 1080          # output video width (height derived from aspect)
@@ -160,8 +164,21 @@ def generate(
         return np.clip(base.astype(float) * (1 - lines) + dark * lines, 0, 255).astype(np.uint8)
 
     # ── video writer ──────────────────────────────────────────────────────
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(output_path, fourcc, fps, (W, H))
+    # H.264 (avc1) first: browsers cannot decode MPEG-4 Part 2 ("mp4v"), so a
+    # mp4v file "downloads but never plays" in the <video> tag. On macOS the
+    # AVFoundation backend provides avc1; keep mp4v only as a last resort so
+    # the pipeline still completes on machines with no H.264 encoder.
+    writer = None
+    for codec in ("avc1", "mp4v"):
+        writer = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*codec), fps, (W, H))
+        if writer.isOpened():
+            if codec != "avc1":
+                log.warning("video: H.264 (avc1) encoder unavailable — wrote %s instead; "
+                            "browsers may not play this file", codec)
+            break
+        writer.release()
+    if writer is None or not writer.isOpened():
+        raise RuntimeError("no working video encoder (tried avc1, mp4v)")
 
     hold_n = int(HOLD_SECS * fps)
     anim_n = int(FADE_SECS * fps)

@@ -13,7 +13,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Viewer from "./Viewer";
 import { outputUrl, type DrawingAnalysis, type Manifest } from "../lib/manifest";
-import { buildConstructionSvg, GUIDE_CAPS, type Guidance } from "../lib/constructionSvg";
+import { buildConstructionSvg, CONTOUR_LABELS, GUIDE_CAPS, type ContourLevel, type Guidance } from "../lib/constructionSvg";
 
 export default function ConstructionView({
   jobId, referenceUrl, manifest, drawingUrl,
@@ -28,6 +28,9 @@ export default function ConstructionView({
   const [failed, setFailed]   = useState(false);
   const [step, setStep]       = useState(0);
   const [guidance, setGuidance] = useState<Guidance>("full");
+  // Artistic contour simplification (user-selectable; busy photos are also
+  // auto-simplified server-side so the outline stays drawable).
+  const [contour, setContour] = useState<ContourLevel>("standard");
 
   useEffect(() => {
     const url = drawingUrl
@@ -42,11 +45,12 @@ export default function ConstructionView({
 
   const stages = drawing?.construction_order ?? [];
   const stage = stages[step];
-  const caps = GUIDE_CAPS[guidance];
+  const caps = { ...GUIDE_CAPS[guidance], contour };
 
   const svg = useMemo(
     () => (drawing ? buildConstructionSvg(drawing, step, caps) : ""),
-    [drawing, step, caps]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [drawing, step, guidance, contour]
   );
 
   if (failed) {
@@ -81,6 +85,17 @@ export default function ConstructionView({
           <button className="btn-primary" style={pill}
                   onClick={() => setStep(s => Math.min(stages.length - 1, s + 1))}
                   disabled={step >= stages.length - 1}>Next →</button>
+          <div className="flex items-center gap-1 ml-3">
+            <span className="text-xs" style={{ color: "var(--text-dim)" }}>Contour</span>
+            {(Object.keys(CONTOUR_LABELS) as ContourLevel[]).map(cl => (
+              <button key={cl} onClick={() => setContour(cl)}
+                      className="px-2 py-1 rounded text-xs" style={{
+                        background: contour === cl ? "var(--accent)" : "var(--surface)",
+                        color: contour === cl ? "var(--paper)" : "var(--text-dim)",
+                        border: "1px solid var(--border)", cursor: "pointer",
+                      }}>{CONTOUR_LABELS[cl]}</button>
+            ))}
+          </div>
           <div className="ml-auto flex items-center gap-1">
             <span className="text-xs" style={{ color: "var(--text-dim)" }}>Guidance</span>
             {(["full", "balanced", "autonomy"] as Guidance[]).map(g => (

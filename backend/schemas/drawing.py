@@ -33,13 +33,21 @@ LandmarkCategory = Literal[
 PathCategory = Literal[
     "silhouette", "envelope_segment", "internal_division",
     "secondary_structure", "alignment", "axis",
+    "tonal_boundary",   # value-zone boundary ("shadow line") drawn as a contour
 ]
 
+# Artistic contour simplification levels (spec §1.3 — no CV jargon):
+# how far the outline is simplified, chosen by the student, adapted
+# automatically for busy photos.
+ContourLevel = Literal["simple", "standard", "refined"]
+
 # The construction stages, in the order the drawing must be built (spec §2).
+# "shadow_line" = outline the value-zone boundaries ON the drawing before any
+# paint, so the block-in fills ready-made shapes.
 ConstructionStageId = Literal[
     "canvas", "placement", "bounds", "occupied_area", "landmarks", "axis",
     "slopes", "envelope", "negative_space", "proportion", "silhouette",
-    "internal_divisions", "secondary_structure", "checkpoint",
+    "internal_divisions", "secondary_structure", "shadow_line", "checkpoint",
 ]
 
 # Soft edge-cause estimate — never asserted as certain (spec §3 / §16).
@@ -105,6 +113,7 @@ class VectorPath(BaseModel):
     lesson_order: int = 0
     suggested_direction: Optional[Literal["forward", "reverse"]] = None
     user_edited: bool = False
+    value_zone: Optional[int] = None   # set on tonal_boundary paths
 
 
 class NegativeSpace(BaseModel):
@@ -188,6 +197,11 @@ class DrawingAnalysis(BaseModel):
     proportion_checks: list[ProportionCheck] = Field(default_factory=list)
     envelope: Optional[Envelope] = None
     silhouette: Optional[VectorPath] = None
+    # The same outer contour at three artistic simplification levels
+    # ("simple"/"standard"/"refined"); `silhouette` stays = the standard one.
+    silhouette_levels: dict[str, VectorPath] = Field(default_factory=dict)
+    # Value-zone boundaries as contours (the "shadow line"), inside the subject.
+    tonal_paths: list[VectorPath] = Field(default_factory=list)
     internal_paths: list[VectorPath] = Field(default_factory=list)
     construction_order: list[ConstructionStage] = Field(default_factory=list)
     algorithm_version: str = "drawing-1"
@@ -196,7 +210,7 @@ class DrawingAnalysis(BaseModel):
     generated_at: Optional[str] = None
 
     def all_paths(self) -> list[VectorPath]:
-        paths = list(self.internal_paths)
+        paths = list(self.internal_paths) + list(self.tonal_paths)
         if self.silhouette:
             paths.append(self.silhouette)
         return paths

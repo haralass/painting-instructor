@@ -94,6 +94,8 @@ export type DrawingAnalysis = {
   proportion_checks: DrawProportion[];
   envelope?: DrawEnvelope | null;
   silhouette?: DrawPath | null;
+  silhouette_levels?: Record<string, DrawPath>;
+  tonal_paths?: DrawPath[];
   internal_paths: DrawPath[];
   construction_order: DrawStage[];
 };

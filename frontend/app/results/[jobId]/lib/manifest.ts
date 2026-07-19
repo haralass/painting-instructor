@@ -154,6 +154,8 @@ export type Manifest = {
   regions_json?: string;               // region hierarchy metadata for this job
   drawing_json?: string;               // Phase 3 structured drawing construction
   lesson?: LessonV2 | null;            // Phase 4 structured composition-first lesson
+  // §14 numbered dot-to-dot: difficulty → printable page + solution variant.
+  dot_to_dot_variants?: Record<string, { n_dots: number; path: string; solution?: string | null }>;
   outline_composites?: Record<string, string>;  // global (non-level-filtered) outline composites
   palette: {
     id: number; name: string; base_rgb: [number,number,number]; area_fraction: number;

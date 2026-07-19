@@ -68,6 +68,11 @@ class _CorpStaticFiles(StaticFiles):
         response = await super().get_response(path, scope)
         response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
         response.headers["Vary"] = "Origin"
+        # no-cache = always revalidate (cheap 304 via the ETag StaticFiles
+        # already sends). Without this, browsers heuristically cache job
+        # assets and keep showing STALE drawing.json/PNGs after a job is
+        # re-analysed — outputs are mutable, not immutable content.
+        response.headers["Cache-Control"] = "no-cache"
         return response
 
 

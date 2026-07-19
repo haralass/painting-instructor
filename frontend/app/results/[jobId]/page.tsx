@@ -74,6 +74,11 @@ export default function ResultsPage() {
   // When set, show the focused step-by-step construction of a local crop.
   const [localConstruction, setLocalConstruction]   = useState<LocalAnalysis | null>(null);
 
+  // §14 numbered dot-to-dot: difficulty + show/hide solution (variants are
+  // pre-rendered by the pipeline; this only swaps which page is shown).
+  const [dotDifficulty, setDotDifficulty] = useState<"simple" | "standard" | "detailed">("standard");
+  const [dotSolution, setDotSolution]     = useState(false);
+
   async function handleSelectArea(bbox: { x: number; y: number; w: number; h: number }) {
     setAnalyzingArea(true);
     setLocalAnalysisError(null);
@@ -128,9 +133,13 @@ export default function ResultsPage() {
   const videoReady = Boolean(manifest?.video);
   const pdfReady   = Boolean(manifest?.pdf);
 
-  // A2: derive analysisUrl and activeAssets from viewMode
+  // A2: derive analysisUrl and activeAssets from viewMode.
+  // The dot-to-dot page swaps by difficulty/solution (pre-rendered variants).
+  const dotVariant = manifest?.dot_to_dot_variants?.[dotDifficulty];
   const analysisUrl = (viewMode === "classic_analysis" && selected)
-    ? selected.url
+    ? (selected.key === "dot_to_dot" && dotVariant
+        ? outputUrl(dotSolution && dotVariant.solution ? dotVariant.solution : dotVariant.path)
+        : selected.url)
     : undefined;
 
   // Compute the ordered list of asset URLs for hierarchical layers
@@ -477,6 +486,39 @@ export default function ResultsPage() {
                 <button onClick={clearLocalAnalysis} title="Clear"
                         style={{ background: "none", border: "none", cursor: "pointer",
                                  color: "var(--text-dim)", flexShrink: 0 }}>✕</button>
+              </div>
+            )}
+
+            {/* §14 dot-to-dot: pick a difficulty, peek the solution */}
+            {viewMode === "classic_analysis" && selected?.key === "dot_to_dot"
+              && manifest?.dot_to_dot_variants
+              && Object.keys(manifest.dot_to_dot_variants).length > 0 && (
+              <div className="mt-3 flex items-center gap-2 flex-wrap">
+                <span className="text-xs" style={{ color: "var(--text-dim)" }}>Difficulty</span>
+                {(["simple", "standard", "detailed"] as const).map(diff => {
+                  const v = manifest.dot_to_dot_variants?.[diff];
+                  return v && (
+                    <button key={diff} onClick={() => setDotDifficulty(diff)}
+                            className="px-2.5 py-1 rounded text-xs"
+                            style={{
+                              background: dotDifficulty === diff ? "var(--accent)" : "var(--surface)",
+                              color: dotDifficulty === diff ? "var(--paper)" : "var(--text-dim)",
+                              border: "1px solid var(--border)", cursor: "pointer",
+                            }}>
+                      {diff === "simple" ? "Simple" : diff === "standard" ? "Standard" : "Detailed"}
+                      {" · "}{v.n_dots} dots
+                    </button>
+                  );
+                })}
+                <button onClick={() => setDotSolution(s => !s)}
+                        className="px-2.5 py-1 rounded text-xs ml-2"
+                        style={{
+                          background: dotSolution ? "var(--sage)" : "var(--surface)",
+                          color: dotSolution ? "var(--paper)" : "var(--text-dim)",
+                          border: "1px solid var(--border)", cursor: "pointer",
+                        }}>
+                  {dotSolution ? "Hide solution" : "Show solution"}
+                </button>
               </div>
             )}
 

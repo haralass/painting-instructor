@@ -6,7 +6,7 @@ from pathlib import Path
 
 from ..utils.paths import outputs_root
 
-from fastapi import FastAPI, UploadFile, Form, HTTPException
+from fastapi import FastAPI, Request, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -26,6 +26,14 @@ from ..teaching.mediums import MEDIUMS, get_medium as _get_medium_cfg
 from ..teaching.mixing import list_brands
 
 from ..capabilities import registry_payload, validate_registry
+from .limits import (
+    ALLOWED_TYPES,
+    client_ip,
+    critique_limiter,
+    job_limiter,
+    queue_position,
+    read_image_upload,
+)
 
 app = FastAPI(title="Painting Instructor API", version="0.4.0")
 
@@ -81,7 +89,6 @@ app.mount("/outputs", _CorpStaticFiles(directory=str(OUTPUTS_DIR)), name="output
 UPLOAD_DIR = OUTPUTS_DIR / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
 
 # Map Celery states → canonical lowercase status
 _CELERY_TO_STATUS = {
@@ -99,6 +106,7 @@ _CELERY_TO_STATUS = {
 # ── POST /jobs/ ───────────────────────────────────────────────────────────────
 @app.post("/jobs/", response_model=CreateJobResponse)
 async def create_job(
+    request:       Request,
     file:          UploadFile,
     medium:        str = Form("oil"),
     # Accept both palette_size (canonical) and n_colors (backward-compat)
@@ -114,8 +122,12 @@ async def create_job(
     brand_id:           str | None = Form(None),
 ):
     """Upload a reference photo and start the painting instructor pipeline."""
-    if file.content_type not in ALLOWED_TYPES:
-        raise HTTPException(400, f"Unsupported image type: {file.content_type}")
+    # Starting a job costs minutes of ML on a single worker. Refuse early when
+    # the caller is already over budget, but only *charge* them once the upload
+    # has been accepted — a mistyped file should not cost someone their quota.
+    caller = client_ip(request)
+    job_limiter.ensure_capacity(caller)
+    image_bytes = await read_image_upload(file, field="reference photo")
 
     # Resolve palette_size: canonical wins; fall back to n_colors; default 12
     resolved_palette = palette_size or n_colors or 12
@@ -132,10 +144,12 @@ async def create_job(
     except ValueError as exc:
         raise HTTPException(422, str(exc))
 
+    job_limiter.record(caller)
+
     job_id = str(uuid.uuid4())
     suffix = Path(file.filename or "img.jpg").suffix or ".jpg"
     img_path = UPLOAD_DIR / f"{job_id}{suffix}"
-    img_path.write_bytes(await file.read())
+    img_path.write_bytes(image_bytes)
 
     # Every upload is a resumable project (brief §18). The worker copies the
     # untouched original to outputs/{job}/reference{suffix}; we record that
@@ -241,7 +255,17 @@ def get_job(job_id: str) -> JobResponse:
         # An expired/forgotten job that reached analysis_ready still resumes.
         if disk is not None:
             return disk
-        return JobResponse(job_id=job_id, status="queued", progress=0, step="queued", message="Waiting to start")
+        # Three friends painting at once share one worker. Say where they are
+        # in the line rather than showing a spinner that looks stuck.
+        place = queue_position(job_id)
+        if place and place > 1:
+            message = f"Waiting to start — you are number {place} in the queue"
+        elif place == 1:
+            message = "Waiting to start — you are next"
+        else:
+            message = "Waiting to start"
+        return JobResponse(job_id=job_id, status="queued", progress=0, step="queued",
+                           message=message, queue_position=place)
 
     if state in ("STARTED", "PROGRESS"):
         meta        = r.info or {}
@@ -292,7 +316,8 @@ def get_job(job_id: str) -> JobResponse:
 
 # ── POST /jobs/{job_id}/critique ──────────────────────────────────────────────
 @app.post("/jobs/{job_id}/critique")
-async def critique_job(job_id: str, file: UploadFile, user_id: str | None = Form(None)):
+async def critique_job(request: Request, job_id: str, file: UploadFile,
+                       user_id: str | None = Form(None)):
     """
     Upload a photo of the student's own painting attempt and get localised,
     actionable feedback against this job's reference image. Runs synchronously
@@ -300,8 +325,10 @@ async def critique_job(job_id: str, file: UploadFile, user_id: str | None = Form
     ML models. Each upload gets its own numbered attempt directory, so the
     student can track successive attempts at the same lesson.
     """
-    if file.content_type not in ALLOWED_TYPES:
-        raise HTTPException(400, f"Unsupported image type: {file.content_type}")
+    caller = client_ip(request)
+    critique_limiter.ensure_capacity(caller)
+    attempt_bytes = await read_image_upload(file, field="photo of your painting")
+    critique_limiter.record(caller)
 
     job_out = outputs_root() / job_id
     reference = next(iter(job_out.glob("reference.*")), None)
@@ -315,7 +342,7 @@ async def critique_job(job_id: str, file: UploadFile, user_id: str | None = Form
 
     suffix = Path(file.filename or "attempt.jpg").suffix or ".jpg"
     attempt_path = attempt_dir / f"attempt{suffix}"
-    attempt_path.write_bytes(await file.read())
+    attempt_path.write_bytes(attempt_bytes)
 
     # Medium + value zones from the job's manifest, if it exists yet
     medium, n_bands = "oil", 5

@@ -7,7 +7,7 @@ import SmoothScroll, { scrollToSection } from "./components/SmoothScroll";
 import AtelierHero from "./components/AtelierHero";
 import KineticTitle from "./components/KineticTitle";
 import EvolvingCanvas, { STAGE_VISUAL_COUNT } from "./components/EvolvingCanvas";
-import { painterUserId } from "./lib/user";
+import { painterUserId, withUserId } from "./lib/user";
 import { CAPABILITIES, DETAIL_LEVELS, MEDIUM_FALLBACKS } from "./lib/contract.generated";
 
 // The one shared catalogue: studies shown here are exactly the advertised
@@ -103,7 +103,7 @@ export default function HomePage() {
   };
   const [recent, setRecent] = useState<RecentProject[]>([]);
   useEffect(() => {
-    fetch(`${API}/projects?limit=6`)
+    fetch(withUserId(`${API}/projects?limit=6`))
       .then(r => (r.ok ? r.json() : []))
       .then((data: RecentProject[]) => setRecent(Array.isArray(data) ? data.filter(p => p.job_id) : []))
       .catch(() => {});

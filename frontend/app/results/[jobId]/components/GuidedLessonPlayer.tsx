@@ -13,6 +13,7 @@ import {
   API, outputUrl, type DrawingAnalysis, type Manifest,
 } from "../lib/manifest";
 import { buildStageSvgById, GUIDE_CAPS, type Guidance } from "../lib/constructionSvg";
+import { withUserId } from "../../../lib/user";
 
 type LessonStep = NonNullable<Manifest["lesson"]>["steps"][number];
 
@@ -47,7 +48,7 @@ export default function GuidedLessonPlayer({
 
   // Resolve the project and hydrate saved progress.
   useEffect(() => {
-    fetch(`${API}/projects/by-job/${jobId}`)
+    fetch(withUserId(`${API}/projects/by-job/${jobId}`))
       .then(r => (r.ok ? r.json() : null))
       .then(p => {
         if (!p) return;
@@ -94,7 +95,7 @@ export default function GuidedLessonPlayer({
     if (!projectId || saving.current) return;
     saving.current = true;
     try {
-      await fetch(`${API}/projects/${projectId}/progress`, {
+      await fetch(withUserId(`${API}/projects/${projectId}/progress`), {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ step_id: stepId, status: "completed" }),
       });
@@ -106,7 +107,7 @@ export default function GuidedLessonPlayer({
     setPassedCps(prev => new Set(prev).add(cpId));
     if (!projectId) return;
     try {
-      await fetch(`${API}/projects/${projectId}/checkpoints`, {
+      await fetch(withUserId(`${API}/projects/${projectId}/checkpoints`), {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type: cpType, status: "passed", checkpoint_id: cpId }),
       });

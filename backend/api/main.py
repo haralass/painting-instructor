@@ -148,6 +148,7 @@ async def create_job(
             medium=medium,
             skill_level=skill_level,
             value_zones=value_zones,
+            user_id=user_id,
             settings={
                 "palette_size":       resolved_palette,
                 "initial_view_level": initial_view_level,
@@ -422,17 +423,24 @@ class _CheckpointUpsert(_BaseModel):
 
 
 @app.get("/projects")
-def list_projects(limit: int = 20):
+def list_projects(limit: int = 20, user_id: str | None = None):
+    """The learner's own projects.
+
+    user_id is a browser-generated identifier, not authentication — it
+    separates people sharing one instance so nobody sees anyone else's
+    paintings or critiques. Access control comes from Cloudflare Access in
+    front of the tunnel (docs/SHARING.md).
+    """
     from ..projects import store as project_store
-    return project_store.list_projects(limit=min(max(limit, 1), 100))
+    return project_store.list_projects(limit=min(max(limit, 1), 100), user_id=user_id)
 
 
 @app.get("/projects/by-job/{job_id}")
-def get_project_by_job(job_id: str):
+def get_project_by_job(job_id: str, user_id: str | None = None):
     """Resolve the project for a job (the workspace knows the job id, not the
     project id) so the lesson player can read/write progress + checkpoints."""
     from ..projects import store as project_store
-    project = project_store.get_project_by_job(job_id)
+    project = project_store.get_project_by_job(job_id, user_id=user_id)
     if project is None:
         raise HTTPException(404, "No project for this job")
     project["lesson_progress"] = project_store.get_lesson_progress(project["id"])
@@ -441,9 +449,9 @@ def get_project_by_job(job_id: str):
 
 
 @app.get("/projects/{project_id}")
-def get_project(project_id: str):
+def get_project(project_id: str, user_id: str | None = None):
     from ..projects import store as project_store
-    project = project_store.get_project(project_id)
+    project = project_store.get_project(project_id, user_id=user_id)
     if project is None:
         raise HTTPException(404, "Project not found")
     project["lesson_progress"] = project_store.get_lesson_progress(project_id)
@@ -455,7 +463,7 @@ def get_project(project_id: str):
 
 
 @app.patch("/projects/{project_id}")
-def patch_project(project_id: str, body: _ProjectPatch):
+def patch_project(project_id: str, body: _ProjectPatch, user_id: str | None = None):
     from ..projects import store as project_store
     if body.current_capability is not None:
         from ..capabilities import resolve_capability_id
@@ -463,6 +471,7 @@ def patch_project(project_id: str, body: _ProjectPatch):
             raise HTTPException(422, f"Unknown capability: {body.current_capability!r}")
     project = project_store.update_project(
         project_id, title=body.title, current_capability=body.current_capability,
+        user_id=user_id,
     )
     if project is None:
         raise HTTPException(404, "Project not found")
@@ -470,9 +479,9 @@ def patch_project(project_id: str, body: _ProjectPatch):
 
 
 @app.post("/projects/{project_id}/progress")
-def set_progress(project_id: str, body: _StepStatus):
+def set_progress(project_id: str, body: _StepStatus, user_id: str | None = None):
     from ..projects import store as project_store
-    if project_store.get_project(project_id) is None:
+    if project_store.get_project(project_id, user_id=user_id) is None:
         raise HTTPException(404, "Project not found")
     try:
         return project_store.set_step_status(project_id, body.step_id, body.status, body.data)
@@ -481,9 +490,9 @@ def set_progress(project_id: str, body: _StepStatus):
 
 
 @app.post("/projects/{project_id}/checkpoints")
-def upsert_checkpoint(project_id: str, body: _CheckpointUpsert):
+def upsert_checkpoint(project_id: str, body: _CheckpointUpsert, user_id: str | None = None):
     from ..projects import store as project_store
-    if project_store.get_project(project_id) is None:
+    if project_store.get_project(project_id, user_id=user_id) is None:
         raise HTTPException(404, "Project not found")
     try:
         return project_store.upsert_checkpoint(

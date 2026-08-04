@@ -1,0 +1,36 @@
+# Cloudflare Tunnel — Painting Instructor
+#
+# Template. Two placeholders to replace, both produced by `cloudflared tunnel
+# create painting-instructor` (see docs/SHARING.md):
+#
+#   <TUNNEL-UUID>   the tunnel id it prints
+#   <YOUR-DOMAIN>   the hostname you want, e.g. paint.example.com
+#
+# Copy to ~/.cloudflared/config.yml, or point cloudflared at it directly:
+#   cloudflared tunnel --config deploy/cloudflared/config.yml run
+
+tunnel: <TUNNEL-UUID>
+credentials-file: /Users/haralambospieri/.cloudflared/<TUNNEL-UUID>.json
+
+# Keep the tunnel from flapping when the Mac sleeps briefly.
+retries: 5
+grace-period: 30s
+
+ingress:
+  # The Next.js frontend is the public face. It calls the API from the
+  # browser, so the API needs its own hostname (below) — not a path prefix,
+  # which would collide with Next's own routes.
+  - hostname: <YOUR-DOMAIN>
+    service: http://localhost:3000
+
+  # The FastAPI backend, including /outputs static assets.
+  - hostname: api.<YOUR-DOMAIN>
+    service: http://localhost:8000
+    originRequest:
+      # Generating a lesson takes minutes; do not cut the connection.
+      connectTimeout: 30s
+      # Large PDFs and videos stream from here.
+      noHappyEyeballs: true
+
+  # cloudflared requires a catch-all rule last.
+  - service: http_status:404

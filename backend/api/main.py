@@ -43,14 +43,17 @@ if _registry_problems:
     raise RuntimeError(f"Capability registry invalid: {_registry_problems}")
 
 # ── CORS ─────────────────────────────────────────────────────────────────────
-_origins = os.getenv(
-    "CORS_ORIGINS",
-    "http://localhost:3000,http://127.0.0.1:3000",
-).split(",")
+# The dev origins are always allowed: CORS_ORIGINS *adds* the public tunnel
+# domain rather than replacing them, so putting the app online cannot silently
+# break local development (and every asset 404s in a way that looks like a
+# broken pipeline rather than a CORS policy).
+_DEV_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
+_extra_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+_origins = list(dict.fromkeys(_DEV_ORIGINS + _extra_origins))
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in _origins],
+    allow_origins=_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )

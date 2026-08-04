@@ -40,3 +40,7 @@ node_modules/
 .vscode/
 .idea/
 *.swp
+
+# Cloudflare tunnel — credentials and per-machine config, never commit
+deploy/cloudflared/.env
+deploy/cloudflared/*.json

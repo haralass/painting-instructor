@@ -235,11 +235,20 @@ def generate(
     # ── Phase 4: Colour — real stroke-by-stroke painting when available ───
     name4, desc4 = _stage_label(stages, 4, "Step 4 — Colour Blocking", "Fill flat colour zones — match your palette numbers")
     _mark(4, name4)
+    detail_arrs: list[np.ndarray] = []
     if stroke_seq:
         # Actual oil strokes accumulating on the canvas (blank → painted),
         # big masses first — the "watch it painted" phase. Pace the frames so
         # the whole sequence spans roughly the same time as the old crossfade.
-        stroke_arrs = [_to_rgb(s, size) for s in stroke_seq]
+        all_arrs = [_to_rgb(s, size) for s in stroke_seq]
+        # stroke_paint emits strokes big-masses-first and fine-detail-last, so
+        # split the sequence between the two phases that describe exactly that:
+        # the masses go down under "colour blocking", the small strokes under
+        # "detail & texture". Handing the whole sequence to phase 4 leaves 5b
+        # with nothing to animate, and the video sits frozen on the finished
+        # painting for seconds while the captions keep advancing.
+        split = max(2, int(round(len(all_arrs) * 0.7)))
+        stroke_arrs, detail_arrs = all_arrs[:split], all_arrs[split:]
         hold_each = max(1, (2 * anim_n) // len(stroke_arrs))
         for arr in stroke_arrs:
             _write([_label_frame(arr, name4, "Paint the masses stroke by stroke — big shapes first")] * hold_each)
@@ -266,12 +275,19 @@ def generate(
     _mark(6, name6)
     # With real strokes the finished painting IS the detail frame — don't
     # stamp line art back over the brushwork.
-    detail = color_on_canvas if stroke_seq else apply_lines(detail_arr, line_alpha=1.0)
-    for i in range(anim_n):
-        t = i / max(1, anim_n - 1)
-        frame = _lerp(color_on_canvas, detail, t)
-        frame = _label_frame(frame, name6, desc6)
-        _write([frame])
+    if stroke_seq:
+        detail = detail_arrs[-1] if detail_arrs else color_on_canvas
+        # Keep painting: the small, high-detail strokes land in this phase.
+        hold_each = max(1, anim_n // len(detail_arrs)) if detail_arrs else 0
+        for arr in detail_arrs:
+            _write([_label_frame(arr, name6, desc6)] * hold_each)
+    else:
+        detail = apply_lines(detail_arr, line_alpha=1.0)
+        for i in range(anim_n):
+            t = i / max(1, anim_n - 1)
+            frame = _lerp(color_on_canvas, detail, t)
+            frame = _label_frame(frame, name6, desc6)
+            _write([frame])
     f6 = _label_frame(detail, name6, desc6)
     _write([f6] * hold_n)
 

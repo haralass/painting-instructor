@@ -1,125 +1,16 @@
 // ── Shared constants, label maps, types and URL helpers for the results view ──
+//
+// All catalogues (page labels, classic page keys, step labels/stages, level
+// labels) come from the GENERATED contract — backend/capabilities.py is the
+// single source of truth. Never define a catalogue by hand here again.
+
+import {
+  PAGE_LABELS, CLASSIC_PAGE_KEYS, STEP_LABELS, STEP_STAGE, LEVEL_LABELS,
+} from "../../../lib/contract.generated";
+
+export { PAGE_LABELS, CLASSIC_PAGE_KEYS, STEP_LABELS, STEP_STAGE, LEVEL_LABELS };
 
 export const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-
-// Which evolving-canvas stage each pipeline step should show, so the loading
-// screen paints the picture forward as the real work advances.
-export const STEP_STAGE: Record<string, number> = {
-  loading: 0, line_art: 1, notan: 2, color_temperature: 3, color_palette: 3,
-  light_direction: 3, color_by_number: 4, dot_to_dot: 1, hierarchical: 4,
-  subject_focus: 3, depth_planes: 3, local_vs_light: 3, value_traps: 2,
-  edge_coach: 4, composition: 4, analysis_ready: 4, observations: 4,
-  rendering_extras: 5, video: 5, pdf: 5, manifest: 5, completed: 5,
-};
-
-// ── Step labels for the progress display ─────────────────────────────────────
-export const STEP_LABELS: Record<string, string> = {
-  loading:          "Loading image…",
-  line_art:         "Drawing outlines…",
-  notan:            "Mapping values…",
-  color_temperature:"Analysing colour temperature…",
-  color_palette:    "Extracting colour palette…",
-  light_direction:  "Finding light source…",
-  color_by_number:  "Building paint-by-numbers…",
-  subject_focus:    "Rendering the focal subject…",
-  depth_planes:     "Mapping depth planes…",
-  local_vs_light:   "Separating colour from light…",
-  value_traps:      "Detecting perceptual traps…",
-  edge_coach:       "Mapping edge hardness…",
-  composition:      "Checking the composition…",
-  dot_to_dot:       "Placing structural dots…",
-  hierarchical:     "Building hierarchical regions…",
-  analysis_ready:   "Analysis complete — generating extras…",
-  observations:     "Looking at your image…",
-  rendering_extras: "Rendering video and PDF…",
-  video:            "Rendering tutorial video…",
-  pdf:              "Assembling PDF…",
-  manifest:         "Writing manifest…",
-  completed:        "Tutorial ready",
-};
-
-// ── Page labels for classic analysis outputs ──────────────────────────────────
-export const PAGE_LABELS: Record<string, { title: string; why: string; tip: string }> = {
-  line_art: {
-    title: "Line Art",
-    why:   "Every painting starts with clear structure. These lines define the silhouette (thickest, most important), interior forms (medium weight), and background texture (lightest).",
-    tip:   "Transfer these outlines to your canvas with light charcoal. Don't press hard — you'll erase them as you paint.",
-  },
-  subject_focus: {
-    title: "Focal Subject",
-    why:   "A local segmentation model isolates your subject from its background. The eye should land here first — keep this area the sharpest, most saturated, and highest in contrast.",
-    tip:   "Paint the muted areas first and loosely; save your cleanest colour, hardest edges, and thickest paint for the subject.",
-  },
-  depth_planes: {
-    title: "Depth Planes",
-    why:   "A local depth model splits the scene into foreground, middle-ground and background. Atmospheric perspective means distance reads as cooler, lighter and lower in contrast — warm/sharp up front, cool/soft far away.",
-    tip:   "Push the background cooler, lighter and softer than it looks; reserve your warmest, darkest, hardest-edged notes for the foreground.",
-  },
-  local_vs_light: {
-    title: "Local Colour vs Light",
-    why:   "Left is the local colour with the light divided out; right is the light alone. A shadow isn't a different colour — it's the same local colour under less light. Mix the local colour first, then adjust it for the light.",
-    tip:   "Judge an object's true colour from the lit-and-shadowed average, then push it warmer/lighter in the light and cooler/darker in shadow — don't reach for a whole new colour.",
-  },
-  value_traps: {
-    title: "Value Traps",
-    why:   "Simultaneous contrast fools the eye: a shape looks darker against a light surround and lighter against a dark one, so you paint the apparent value, not the true one. The tinted zones are where the trap is strongest — cool = you'll go too dark, warm = too light.",
-    tip:   "In these zones, don't trust the local comparison. Judge the value against the whole picture — hold your darkest dark and lightest light in mind and place it between them.",
-  },
-  edge_coach: {
-    title: "Edge Control",
-    why:   "The eye locks onto the hardest edge in the picture. Warm marks are your hard/found edges, cool are soft/lost. They should cluster on the focal subject and dissolve in the shadows and background — equal sharpness everywhere means nothing leads the eye.",
-    tip:   "Keep your crispest edges on the focal point; soften edges where similar values meet and everywhere you want the eye to pass over.",
-  },
-  composition: {
-    title: "Composition & Focus",
-    why:   "The warm ring is where the eye is pulled hardest (contrast × detail × colour); a cool ring marks a rival that competes for attention. A strong picture has one focal point, ideally near a rule-of-thirds intersection (the grid).",
-    tip:   "If two centres compete, subdue one — lower its contrast, detail or saturation. Place your strongest note on the subject, near a third, not dead centre.",
-  },
-  notan: {
-    title: "Value Study (Notan)",
-    why:   "Notan is a Japanese design concept — before you touch colour, you must get your lights and darks right. A painting with correct values reads in black and white.",
-    tip:   "Mix 3 values: darkest dark, mid grey, white. Fill the entire canvas with these before adding colour.",
-  },
-  color_temperature: {
-    title: "Colour Temperature",
-    why:   "Lit areas are warm (yellow/orange), shadows are cool (blue/purple). This is James Gurney's core principle. This map shows an approximation based on LAB b* + chroma.",
-    tip:   "Premix a warm and a cool version of every colour. Lean lights warm, shadows cool.",
-  },
-  color_palette: {
-    title: "Colour Palette",
-    why:   "The dominant colours of your reference, sorted by area coverage. A limited palette forces harmony — mix from these rather than adding new tubes.",
-    tip:   "Lay out this palette before you start. Only these colours — no extras.",
-  },
-  light_direction: {
-    title: "Light & Shadow Zones",
-    why:   "Gurney's 5 zones: Highlight → Halftone → Core Shadow → Reflected Light → Cast Shadow. The core shadow is your darkest paint.",
-    tip:   "Position your actual light source to match this angle, or mentally commit to it and never change it.",
-  },
-  color_by_number: {
-    title: "Paint by Numbers",
-    why:   "Flat colour blocking is how every master painter starts a canvas. Fill the entire canvas before blending — if any white shows through, you cannot judge colour relationships.",
-    tip:   "Block in flat colour before blending. Use a large flat brush, cover every zone completely.",
-  },
-  dot_to_dot: {
-    title: "Structural Dots",
-    why:   "These dots trace the most structurally significant edges. Connecting them in order builds your under-drawing.",
-    tip:   "Connect these dots lightly with a pencil before painting. This is your structural under-drawing.",
-  },
-  study_overlay: {
-    title: "Detail Study",
-    why:   "Every colour-region boundary traced directly on the reference — the digital version of outlining shapes by hand on a print. Use it to see exactly where one colour ends and the next begins.",
-    tip:   "Pick one small area, follow its traced shapes, and mix each one separately before you commit it to the canvas.",
-  },
-};
-
-// ── Level labels for hierarchical detail ─────────────────────────────────────
-export const LEVEL_LABELS: Record<number, string> = {
-  1: "Foundation",
-  2: "Simplified",
-  3: "Standard",
-  4: "Detailed",
-  5: "Full Reference",
-};
 
 export const LAYER_KEYS = ["outlines", "regions", "values", "colours"] as const;
 export type LayerKey = typeof LAYER_KEYS[number];
@@ -139,14 +30,75 @@ export const OUTLINE_SUBLAYER_LABELS: Record<string, string> = {
   texture:    "Texture",
 };
 
-export const CLASSIC_PAGE_KEYS = [
-  "line_art", "notan", "color_temperature", "color_palette",
-  "light_direction", "color_by_number", "dot_to_dot", "study_overlay",
-  "subject_focus", "depth_planes", "local_vs_light",
-  "value_traps", "edge_coach", "composition",
-];
+export type CompareMode = "analysis" | "reference" | "side_by_side" | "overlay" | "split";
 
-export type CompareMode = "analysis" | "reference" | "side_by_side" | "overlay";
+// ── Phase 4: structured lesson (mirrors backend/schemas/lesson.py) ──
+export type LessonOverlay = { kind: string; asset?: string | null; region_ids: number[]; opacity?: number };
+export type LessonCompletion = { kind: "confirm" | "upload" | "trace"; criteria: string };
+export type LessonStepV2 = {
+  id: string; capability_id: string; phase: string; order: number;
+  title: string; objective: string; explanation: string; action: string;
+  overlays: LessonOverlay[]; tool?: string | null; mixture?: string | null;
+  completion_check?: LessonCompletion | null; common_mistake?: string | null;
+  stop_condition?: string | null; checkpoint_id?: string | null; depends_on: string[];
+};
+export type LessonCheckpoint = {
+  id: string; type: string; title: string; instructions: string;
+  required: boolean; accepts: string[];
+};
+export type LessonV2 = {
+  id: string; capability_id: string; medium: string; guidance: string;
+  steps: LessonStepV2[]; checkpoints: LessonCheckpoint[];
+};
+
+// ── Phase 3: structured drawing construction (mirrors backend/schemas/drawing.py) ──
+export type Pt = [number, number];
+export type EdgeCause = {
+  scores: Record<string, number>;
+  primary: string | null;
+  confidence: number;
+};
+export type DrawLandmark = {
+  id: string; category: string; x: number; y: number; normalized: Pt;
+  importance: number; confidence: number; visibility_level: number; lesson_order: number;
+};
+export type DrawAxis = {
+  id: string; start: Pt; end: Pt; orientation_deg: number; role: string; importance: number;
+};
+export type DrawPath = {
+  id: string; category: string; points: Pt[]; closed: boolean;
+  hierarchy_level: number; importance: number; edge_cause?: EdgeCause | null;
+  stage: string; lesson_order: number;
+};
+export type DrawNegativeSpace = {
+  id: string; polygon: Pt[]; touches_edges: string[]; area_fraction: number; importance: number;
+};
+export type DrawEnvelope = { id: string; vertices: Pt[]; segment_count: number; landmark_ids: string[] };
+export type DrawProportion = { id: string; kind: string; label: string; value?: number | null; reference_points: Pt[]; landmark_ids: string[] };
+export type DrawStage = {
+  id: string; order: number; title: string; summary: string;
+  landmark_ids: string[]; axis_ids: string[]; path_ids: string[];
+  negative_space_ids: string[]; proportion_check_ids: string[]; is_checkpoint: boolean;
+};
+export type DrawingAnalysis = {
+  id: string; image_width: number; image_height: number; canvas_ratio: number;
+  subject_bounds: {
+    x_min: number; y_min: number; x_max: number; y_max: number;
+    margins: Record<string, number>; occupied_fraction: number; source: string; confidence: number;
+  };
+  occupied_area: Pt[];
+  main_axis?: DrawAxis | null;
+  dominant_slopes: DrawAxis[];
+  landmarks: DrawLandmark[];
+  negative_spaces: DrawNegativeSpace[];
+  proportion_checks: DrawProportion[];
+  envelope?: DrawEnvelope | null;
+  silhouette?: DrawPath | null;
+  silhouette_levels?: Record<string, DrawPath>;
+  tonal_paths?: DrawPath[];
+  internal_paths: DrawPath[];
+  construction_order: DrawStage[];
+};
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export type JobStatus = {
@@ -198,6 +150,12 @@ export type Manifest = {
     edge_maps?: Record<string, string>;  // level-aware sublayers — NOT the same as the top-level edge_maps below
   }>;
   edge_maps?: Record<string, string>;  // global, non-level-filtered — "primary"|"secondary"|"decorative"|"texture" → rel path
+  label_maps?: Record<string, string>; // per-level RGB-encoded region-id maps (viewer click-select)
+  regions_json?: string;               // region hierarchy metadata for this job
+  drawing_json?: string;               // Phase 3 structured drawing construction
+  lesson?: LessonV2 | null;            // Phase 4 structured composition-first lesson
+  // §14 numbered dot-to-dot: difficulty → printable page + solution variant.
+  dot_to_dot_variants?: Record<string, { n_dots: number; path: string; solution?: string | null }>;
   outline_composites?: Record<string, string>;  // global (non-level-filtered) outline composites
   palette: {
     id: number; name: string; base_rgb: [number,number,number]; area_fraction: number;
@@ -248,6 +206,42 @@ export type AnalysisPage = {
   title: string;
   why: string;
   tip: string;
+};
+
+// ── Phase 2 leftover: rectangle region selection + "Analyse this area" ──
+// Mirrors backend/analysis/local.py's return dict. Selection geometry is
+// ORIGINAL image px (frontend/app/lib/imageCoords.ts convention); `offset`
+// + `scale` map any point in the local result back onto the parent image:
+//   parent_px = offset + local_px / scale
+export type LocalAnalysisBBox = { x: number; y: number; w: number; h: number };
+export type LocalAnalysisAssets = {
+  outlines: string | null;
+  regions: string | null;
+  values: string | null;
+  colours: string | null;
+  label_map: string | null;
+  regions_json: string | null;
+  drawing_json: string | null;
+  crop: string | null;
+  detail_level: number | null;
+};
+export type LocalDrawingSummary = {
+  subject_source: string | null;
+  occupied_fraction: number | null;
+  n_landmarks: number;
+  envelope_segments: number | null;
+  n_internal_paths: number;
+  silhouette_cause: string | null;
+};
+export type LocalAnalysis = {
+  selection_id: string;
+  job_id: string;
+  bbox: LocalAnalysisBBox;             // the true crop rect, ORIGINAL image px
+  offset: { x: number; y: number };
+  scale: number;                        // working px per crop px
+  working_size: { width: number; height: number };
+  assets: LocalAnalysisAssets;          // outputs-relative paths — use outputUrl()
+  drawing_summary: LocalDrawingSummary | null;   // focused local construction (brief §9)
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

@@ -37,11 +37,6 @@ def _fake_line_art(img, resolution=1024, fg_mask=None):
     return img.convert("L").convert("RGB"), np.ones((img.size[1], img.size[0]), dtype=np.uint8) * 255
 
 
-def _fake_color_by_number(img, n_colors=12):
-    """Stand-in for color_by_number.processor.process — no BiSeNet download."""
-    return img.convert("RGB")
-
-
 def _test_image(w: int = 120, h: int = 160) -> Image.Image:
     arr = np.zeros((h, w, 3), dtype=np.uint8)
     arr[: h // 2] = [120, 170, 220]   # sky
@@ -83,8 +78,9 @@ def _upload_and_wait(client: TestClient, medium: str = "oil") -> tuple[str, dict
     img.save(buf, format="JPEG")
     buf.seek(0)
 
-    with patch("backend.pipeline.line_art.processor.process_with_mask", side_effect=_fake_line_art), \
-         patch("backend.pipeline.color_by_number.processor.process", side_effect=_fake_color_by_number):
+    # The classic color_by_number processor was retired (the hierarchy render
+    # produces the same page), so only line_art still needs its ML stand-in.
+    with patch("backend.pipeline.line_art.processor.process_with_mask", side_effect=_fake_line_art):
         res = client.post(
             "/jobs/",
             files=[("file", ("ref.jpg", buf, "image/jpeg"))],

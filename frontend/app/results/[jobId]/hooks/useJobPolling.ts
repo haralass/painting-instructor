@@ -17,7 +17,7 @@ export type JobPolling = {
   setViewMode: React.Dispatch<React.SetStateAction<ViewMode>>;
 };
 
-export type ViewMode = "lesson" | "classic_analysis" | "hierarchical_lesson" | "critique" | "squint";
+export type ViewMode = "lesson" | "classic_analysis" | "hierarchical_lesson" | "critique" | "squint" | "construction";
 
 // Polls the job status endpoint, fetches the manifest when ready, and derives
 // the classic-analysis page list. Also owns the shared selection/view state

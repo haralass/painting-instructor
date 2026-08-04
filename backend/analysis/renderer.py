@@ -9,13 +9,10 @@ from .models import DetailLevel, Region, ColourFamily, ValueZone, MediumStrategy
 from .preprocessing import ImageCache
 from .edges import LEVEL_EDGE_TYPES
 
-_LEVEL_LABELS = {
-    1: "Foundation",
-    2: "Simplified",
-    3: "Standard",
-    4: "Detailed",
-    5: "Full Reference",
-}
+# Level labels come from the shared capability registry. Level 5 is the
+# finest quantized cut of the merge tree — "Full Detail", never "Full
+# Reference": that name is reserved for the untouched original photograph.
+from ..capabilities import LEVEL_LABELS as _LEVEL_LABELS
 
 # Which outline map to use per level
 _LEVEL_OUTLINE = {

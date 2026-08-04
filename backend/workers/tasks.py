@@ -20,33 +20,12 @@ celery_app.conf.task_serializer   = "json"
 celery_app.conf.result_serializer = "json"
 celery_app.conf.accept_content    = ["json"]
 
-# Progress checkpoints per step
-_PROGRESS = {
-    "loading":          5,
-    "preprocessing":    10,
-    "line_art":         15,
-    "notan":            25,
-    "value_analysis":   30,
-    "color_temperature":35,
-    "color_palette":    42,
-    "light_direction":  48,
-    "color_by_number":  55,
-    "subject_focus":    56,
-    "depth_planes":     57,
-    "local_vs_light":   58,
-    "value_traps":      59,
-    "edge_coach":       61,
-    "composition":      63,
-    "dot_to_dot":       65,
-    "hierarchical":     75,
-    "analysis_ready":   80,   # NEW — preliminary manifest written
-    "observations":     82,
-    "rendering_extras": 85,   # NEW — starting video/PDF
-    "video":            88,
-    "pdf":              93,
-    "manifest":         97,
-    "completed":        100,
-}
+# Progress checkpoints + messages come from the shared capability registry
+# (backend/capabilities.py) — the single source every surface reads, so a new
+# pipeline step cannot ship without its progress/label metadata again.
+from ..capabilities import STEP_INFO
+
+_PROGRESS = {name: info.pct for name, info in STEP_INFO.items()}
 
 
 @celery_app.task(bind=True, name="art_book.run_pipeline")
@@ -72,18 +51,20 @@ def run_pipeline(
 
     Steps:
       1. loading          — open & resize image
-      2-7. (concurrent, independent of each other):
+      2-6. (concurrent, independent of each other):
          line_art         — 3-layer composite + fg_mask
          notan            — adaptive value study
          color_temperature— LAB b* warm/cool map (fixed channel)
          color_palette    — K-means++ dominant colour chart
          light_direction  — Sobel histogram + 5-zone overlay
-         color_by_number  — bilateral+RAG paint-by-numbers
-      8. dot_to_dot       — skeleton arc-length numbered dots (needs line_art's result)
-      9. hierarchical     — multi-scale region hierarchy + edge classification
-     10. video            — progressive tutorial animation
-     11. pdf              — A4 book of all pages that succeeded
-     12. manifest         — manifest.json describing all outputs
+      7. hierarchical     — multi-scale region hierarchy + edge classification;
+                            also renders paint-by-numbers and the smart
+                            dot-to-dot (the classic standalone generators for
+                            both were retired — see MIGRATIONS in
+                            backend/capabilities.py)
+      8. video            — progressive tutorial animation
+      9. pdf              — A4 book of all pages that succeeded
+     10. manifest         — manifest.json describing all outputs
     """
     import numpy as np
     from PIL import Image
@@ -93,8 +74,6 @@ def run_pipeline(
     from ..pipeline.artist_breakdown.processor import (
         notan, color_palette, color_temperature, light_direction_with_angle
     )
-    from ..pipeline.color_by_number.processor import process as color_by_number
-    from ..pipeline.dot_to_dot.processor import process as dot_to_dot
     from ..analysis.subject import subject_mask as compute_subject_mask
     from ..analysis.depth import depth_planes as compute_depth_planes
     from ..analysis.albedo_shading import local_vs_light_page
@@ -122,34 +101,9 @@ def run_pipeline(
     timings: dict[str, float] = {}
 
     def progress(name: str) -> None:
-        pct = _PROGRESS.get(name, 5)
-        msg = {
-            "loading":          "Loading image",
-            "subject_mask":     "Isolating the subject",
-            "depth":            "Estimating depth",
-            "line_art":         "Drawing outlines",
-            "subject_focus":    "Rendering the focal subject",
-            "depth_planes":     "Mapping depth planes",
-            "local_vs_light":   "Separating colour from light",
-            "notan":            "Mapping values",
-            "value_traps":      "Detecting perceptual traps",
-            "color_temperature":"Analysing warm/cool tones",
-            "color_palette":    "Extracting colour palette",
-            "light_direction":  "Finding light source",
-            "color_by_number":  "Building paint-by-numbers",
-            "dot_to_dot":       "Placing structural dots",
-            "edge_coach":       "Mapping edge hardness",
-            "composition":      "Checking the composition",
-            "hierarchical":     "Building hierarchical regions",
-            "analysis_ready":   "Analysis complete — generating extras",
-            "observations":     "Looking at your image",
-            "rendering_extras": "Rendering video and PDF",
-            "stroke_paint":     "Painting the brushstrokes",
-            "video":            "Rendering tutorial video",
-            "pdf":              "Assembling PDF book",
-            "manifest":         "Writing manifest",
-            "completed":        "Tutorial ready",
-        }.get(name, name)
+        info = STEP_INFO.get(name)
+        pct = info.pct if info else 5
+        msg = info.message if info else name
         self.update_state(
             state="PROGRESS",
             meta={"step": name, "progress": pct, "message": msg, "errors": errors},
@@ -222,7 +176,6 @@ def run_pipeline(
         "color_temperature": lambda: color_temperature(img),
         "color_palette":     lambda: color_palette(img, n_colors=palette_size),
         "light_direction":   lambda: light_direction_with_angle(img),
-        "color_by_number":   lambda: color_by_number(img, n_colors=palette_size),
     }
     parallel_results: dict[str, object] = {}
     with ThreadPoolExecutor(max_workers=len(parallel_jobs)) as executor:
@@ -324,23 +277,7 @@ def run_pipeline(
         light_img, light_angle = r
         pages.append(save("light_direction", light_img))
 
-    # Perf: O(P×E) full-image mask comparisons have been eliminated via per-label
-    # LUT precomputation in color_by_number/processor.py.
-    cbn_result = parallel_results.get("color_by_number")
-    if cbn_result:
-        pages.append(save("color_by_number", cbn_result))
-    log.info("color_by_number timing: %.2fs", timings.get("color_by_number", 0.0))
-
-    # ── Step 8: Dot to dot (reuses line art — no second edge detection) ───────
-    r = run("dot_to_dot", lambda: dot_to_dot(
-        img, n_dots=500,
-        line_art_img=la_result,
-        fg_mask=fg_mask,
-    ))
-    if r:
-        pages.append(save("dot_to_dot", r))
-
-    # ── Step 9: Hierarchical analysis (new architecture) — CRITICAL ──────────
+    # ── Step 7: Hierarchical analysis (new architecture) — CRITICAL ──────────
     CRITICAL_STEPS = {"loading", "hierarchical"}
     try:
         from ..analysis.pipeline import run_hierarchical_analysis
@@ -356,6 +293,9 @@ def run_pipeline(
             texture_detail=texture_detail,
             background_detail=background_detail,
             region_complexity=region_complexity,  # A6
+            subj_mask=subj_mask,   # Phase 3: drawing construction + edge-cause
+            depth_lbl=depth_lbl,
+            job_id=job_id,
         )
         timings["hierarchical"] = round(time.perf_counter() - t0, 2)
         # Append hierarchical detail level outputs as additional pages
@@ -374,15 +314,25 @@ def run_pipeline(
         raise RuntimeError(f"Critical hierarchical analysis failed:\n{tb}")
     hier = hier or {}
 
-    # Hierarchy-based paint-by-numbers replaces the classic page; if the
-    # classic step failed (no ML deps) it was never in `pages`, so add it.
+    # Paint-by-numbers and the dot-to-dot exercise come from the SAME region
+    # hierarchy the lesson teaches (the classic standalone generators were
+    # retired — one segmentation everywhere keeps the guides consistent).
     pbn_path = hier.get("paint_by_numbers")
-    if pbn_path and not any(Path(p).name == "color_by_number.png" for p in pages):
+    if pbn_path:
         pages.append(pbn_path)
     if hier.get("study_overlay"):
         pages.append(hier["study_overlay"])
-    if hier.get("smart_dot_to_dot") and not any(Path(p).name == "dot_to_dot.png" for p in pages):
+    if hier.get("smart_dot_to_dot"):
         pages.append(hier["smart_dot_to_dot"])
+
+    # Colour-blocking image for the tutorial video, loaded from the
+    # hierarchy-based paint-by-numbers render.
+    cbn_result = None
+    if pbn_path and Path(pbn_path).exists():
+        try:
+            cbn_result = Image.open(pbn_path).convert("RGB")
+        except Exception:
+            log.warning("could not open paint-by-numbers page for the video", exc_info=True)
 
     # ── Step 9a: Image brief — the personal part of the lesson. Deterministic,
     #    derived entirely from this job's own analysis data: which masses to
@@ -449,6 +399,35 @@ def run_pipeline(
         lesson_plan_abs = attach_image_notes(lesson_plan_abs, image_brief, medium)
     lesson_plan_rel = _relativize_lesson_plan(lesson_plan_abs)
 
+    # ── Structured composition-first lesson (Phase 4) ─────────────────────────
+    # The new Lesson (schemas/lesson.py) generated from the Phase-3 drawing
+    # construction + this job's value/colour/edge/brief signals. Never fatal —
+    # the legacy medium-stage lesson_plan above still drives the old player.
+    structured_lesson: dict | None = None
+    try:
+        from ..teaching.lesson_engine import generate_lesson, SKILL_TO_GUIDANCE
+        _dl3 = hier.get("detail_levels", {}).get("3", {})
+        lesson_assets = {
+            "value_zones_map": rel_to_outputs(hier.get("value_zones_path")),
+            "colours":         rel_to_outputs(_dl3.get("colours")),
+            "edges":           rel_to_outputs(hier.get("edges_svg")),
+        }
+        lesson_obj = generate_lesson(
+            drawing=hier.get("drawing"),
+            value_zones=hier.get("value_zone_list", []),
+            palette=hier.get("palette", []),
+            image_brief=image_brief,
+            medium=medium,
+            guidance=SKILL_TO_GUIDANCE.get(skill_level, "balanced"),
+            assets=lesson_assets,
+        )
+        structured_lesson = lesson_obj.model_dump()
+        (out_dir / "lesson.json").write_text(lesson_obj.model_dump_json(indent=2))
+    except Exception:
+        tb = traceback.format_exc()
+        errors["lesson_engine"] = tb
+        log.warning("structured lesson generation failed:\n%s", tb)
+
     # Write preliminary manifest immediately after hierarchical succeeds
     manifest_path = out_dir / "manifest.json"
     progress("analysis_ready")
@@ -473,6 +452,7 @@ def run_pipeline(
         brand_id=brand_id,
         image_brief=image_brief,
         lesson_plan=lesson_plan_rel,
+        structured_lesson=structured_lesson,
     )
     prelim_manifest["status"] = "analysis_ready"
     manifest_path.write_text(json.dumps(prelim_manifest, indent=2))
@@ -582,6 +562,7 @@ def run_pipeline(
         video_chapters=video_chapters,
         personal_observations=personal_observations,
         lesson_plan=lesson_plan_rel,
+        structured_lesson=structured_lesson,
     )
     manifest_path.write_text(json.dumps(manifest, indent=2))
 
@@ -716,6 +697,7 @@ def _build_manifest(
     video_chapters: list[dict] | None = None,
     personal_observations: str | None = None,
     lesson_plan: list[dict] | None = None,
+    structured_lesson: dict | None = None,
 ) -> dict:
     w, h = img.size
 
@@ -751,6 +733,19 @@ def _build_manifest(
         "edge_maps":      edge_maps_rel,    # A4: individual sublayer maps
         "outline_composites": outline_composites_rel,
         "value_zones_map": value_zones_map,
+        # Per-level RGB-encoded region-id maps for viewer click-select.
+        "label_maps": {str(k): rel_to_outputs(p) for k, p in (hier.get("label_maps") or {}).items() if p},
+        "regions_json": rel_to_outputs(hier.get("regions_json")),
+        # Phase 3: structured drawing-construction analysis (bounds, landmarks,
+        # envelope, silhouette, internal paths, pedagogical construction order).
+        "drawing_json": rel_to_outputs(hier.get("drawing_json")),
+        # §14 numbered dot-to-dot variants (difficulty → page + solution).
+        "dot_to_dot_variants": {
+            k: {"n_dots": v.get("n_dots"),
+                "path": rel_to_outputs(v.get("path")),
+                "solution": rel_to_outputs(v.get("solution"))}
+            for k, v in (hier.get("dot_to_dot_variants") or {}).items()
+        },
         "palette":        _palette_with_recipes(hier.get("palette", []), medium, brand_id),
         "colour_families":hier.get("colour_families", []),
         "value_zones":    hier.get("value_zone_list", []),
@@ -786,5 +781,7 @@ def _build_manifest(
             lesson_plan = _attach_notes(lesson_plan, image_brief, medium)
     manifest["lesson_plan"] = lesson_plan
     manifest["image_brief"] = image_brief or {}
+    # Phase 4: the structured composition-first Lesson (schemas/lesson.py).
+    manifest["lesson"] = structured_lesson
 
     return manifest

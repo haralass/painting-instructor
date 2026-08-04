@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { CAPABILITIES } from "../lib/contract.generated";
 
 export const metadata: Metadata = {
   title: "Gallery — Painting Instructor",
@@ -7,68 +8,9 @@ export const metadata: Metadata = {
     "Every study the atelier generates from a single photo — line art, value studies, colour palettes and more, before you upload your own.",
 };
 
-// ── The studies produced from one reference photo ──────────────────────────────
-// Each maps to a committed sample under /public/samples/demo1/. One-liners
-// adapted from the results-page PAGE_LABELS.
-type Study = { file: string; title: string; teaches: string };
-
-const STUDIES: Study[] = [
-  {
-    file: "line_art",
-    title: "Line Art",
-    teaches: "Weighted contours that lock in the silhouette before a drop of paint.",
-  },
-  {
-    file: "notan",
-    title: "Value Study (Notan)",
-    teaches: "Lights and darks resolved first — get these right and the painting reads.",
-  },
-  {
-    file: "color_palette",
-    title: "Colour Palette",
-    teaches: "Your reference distilled to a limited, harmonious set of mixing colours.",
-  },
-  {
-    file: "color_by_number",
-    title: "Paint by Numbers",
-    teaches: "Flat colour blocks to fill the whole canvas before you blend.",
-  },
-  {
-    file: "light_direction",
-    title: "Light & Shadow",
-    teaches: "Gurney's five zones map where light lands and shadow gathers.",
-  },
-  {
-    file: "subject_focus",
-    title: "Focal Subject",
-    teaches: "The subject lifted from its background — your sharpest, most saturated note.",
-  },
-  {
-    file: "depth_planes",
-    title: "Depth Planes",
-    teaches: "Foreground, middle and background split so distance reads cooler and softer.",
-  },
-  {
-    file: "local_vs_light",
-    title: "Local Colour vs Light",
-    teaches: "An object's true colour separated from the light falling on it.",
-  },
-  {
-    file: "value_traps",
-    title: "Value Traps",
-    teaches: "Where the eye is fooled into painting the wrong value — flagged in advance.",
-  },
-  {
-    file: "edge_coach",
-    title: "Edge Control",
-    teaches: "Hard and soft edges mapped so the eye lands where you want it.",
-  },
-  {
-    file: "composition",
-    title: "Composition & Focus",
-    teaches: "Where attention is pulled — and any rival that competes for it.",
-  },
-];
+// The gallery shows EXACTLY the advertised capabilities with real sample
+// assets — the same shared contract the landing page and workspace read.
+const STUDIES = CAPABILITIES.filter(c => c.advertised && c.sample);
 
 export default function GalleryPage() {
   return (
@@ -79,7 +21,7 @@ export default function GalleryPage() {
           <p className="eyebrow">The gallery</p>
           <h1 className="font-display mt-4 text-4xl sm:text-6xl leading-[1.05] tracking-tight text-[color:var(--ink)]">
             One photo,{" "}
-            <span className="text-gradient">a dozen studies</span>.
+            <span className="text-gradient">{STUDIES.length} studies</span>.
           </h1>
           <p className="mt-6 text-lg sm:text-xl leading-relaxed text-[color:var(--text-dim)]">
             Every study the atelier generates from a single photo — before you
@@ -117,23 +59,23 @@ export default function GalleryPage() {
           <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {STUDIES.map((s) => (
               <article
-                key={s.file}
+                key={s.id}
                 className="panel overflow-hidden flex flex-col transition-transform duration-300 hover:-translate-y-1"
               >
                 <div className="overflow-hidden bg-[color:var(--surface-2)]">
                   <img
-                    src={`/samples/demo1/${s.file}.jpg`}
-                    alt={`${s.title} study generated from the reference photo.`}
+                    src={`/samples/demo1/${s.sample}`}
+                    alt={`${s.name} study generated from the reference photo.`}
                     loading="lazy"
                     className="block w-full max-w-full h-auto aspect-[4/3] object-cover"
                   />
                 </div>
                 <div className="px-5 py-5 flex flex-col gap-2">
                   <h2 className="font-display text-xl leading-tight text-[color:var(--ink)]">
-                    {s.title}
+                    {s.name}
                   </h2>
                   <p className="text-sm leading-relaxed text-[color:var(--text-dim)]">
-                    {s.teaches}
+                    {s.description}
                   </p>
                 </div>
               </article>

@@ -2,13 +2,16 @@
 import { useState, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { absUrl, outputUrl, type CompareMode } from "./lib/manifest";
+import { API, absUrl, outputUrl, LEVEL_LABELS, type CompareMode, type LocalAnalysis } from "./lib/manifest";
 import { useJobPolling } from "./hooks/useJobPolling";
 import LoadingScreen from "./components/LoadingScreen";
 import ImageDisplay from "./components/ImageDisplay";
+import Viewer from "./components/Viewer";
 import LessonPlayer from "./components/LessonPlayer";
+import GuidedLessonPlayer from "./components/GuidedLessonPlayer";
 import CritiquePanel from "./components/CritiquePanel";
 import SquintSimulator from "./components/SquintSimulator";
+import ConstructionView from "./components/ConstructionView";
 import ProgressiveReveal from "./components/ProgressiveReveal";
 import HierarchicalControls from "./components/HierarchicalControls";
 import TeachingAside from "./components/TeachingAside";
@@ -62,6 +65,45 @@ export default function ResultsPage() {
 
   const videoRef = useRef<HTMLVideoElement>(null);
 
+  // Phase 2 leftover: rectangle region selection + "Analyse this area".
+  // The Viewer owns the drag-to-select rectangle; this page owns the actual
+  // network call and the small result panel that shows what came back.
+  const [localAnalysis, setLocalAnalysis]           = useState<LocalAnalysis | null>(null);
+  const [localAnalysisError, setLocalAnalysisError] = useState<string | null>(null);
+  const [analyzingArea, setAnalyzingArea]            = useState(false);
+  // When set, show the focused step-by-step construction of a local crop.
+  const [localConstruction, setLocalConstruction]   = useState<LocalAnalysis | null>(null);
+
+  // §14 numbered dot-to-dot: difficulty + show/hide solution (variants are
+  // pre-rendered by the pipeline; this only swaps which page is shown).
+  const [dotDifficulty, setDotDifficulty] = useState<"simple" | "standard" | "detailed">("standard");
+  const [dotSolution, setDotSolution]     = useState(false);
+
+  async function handleSelectArea(bbox: { x: number; y: number; w: number; h: number }) {
+    setAnalyzingArea(true);
+    setLocalAnalysisError(null);
+    try {
+      const res = await fetch(`${API}/jobs/${jobId}/local-analysis`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(bbox),
+      });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => null);
+        throw new Error(detail?.detail ?? `Local analysis failed (${res.status})`);
+      }
+      setLocalAnalysis(await res.json() as LocalAnalysis);
+    } catch (err) {
+      setLocalAnalysisError(err instanceof Error ? err.message : "Local analysis failed");
+    } finally {
+      setAnalyzingArea(false);
+    }
+  }
+  function clearLocalAnalysis() {
+    setLocalAnalysis(null);
+    setLocalAnalysisError(null);
+  }
+
   // ── Loading / Error states ─────────────────────────────────────────────────
   // A3: show results layout if analysis_ready even while video/PDF still processing
   const showResults = jobStatus.status === "completed"
@@ -91,9 +133,13 @@ export default function ResultsPage() {
   const videoReady = Boolean(manifest?.video);
   const pdfReady   = Boolean(manifest?.pdf);
 
-  // A2: derive analysisUrl and activeAssets from viewMode
+  // A2: derive analysisUrl and activeAssets from viewMode.
+  // The dot-to-dot page swaps by difficulty/solution (pre-rendered variants).
+  const dotVariant = manifest?.dot_to_dot_variants?.[dotDifficulty];
   const analysisUrl = (viewMode === "classic_analysis" && selected)
-    ? selected.url
+    ? (selected.key === "dot_to_dot" && dotVariant
+        ? outputUrl(dotSolution && dotVariant.solution ? dotVariant.solution : dotVariant.path)
+        : selected.url)
     : undefined;
 
   // Compute the ordered list of asset URLs for hierarchical layers
@@ -133,7 +179,9 @@ export default function ResultsPage() {
       ];
 
   return (
-    <main className="min-h-screen flex flex-col" style={{ background: "var(--bg)" }}>
+    // h-screen + overflow-hidden: the shell owns the viewport; each panel
+    // scrolls independently. No page-level scroll, no giant empty columns.
+    <main className="h-screen flex flex-col overflow-hidden" style={{ background: "var(--bg)" }}>
 
       {/* ── Top bar ─────────────────────────────────────────────────────────── */}
       <header className="flex items-center justify-between px-6 py-4 border-b flex-shrink-0"
@@ -188,7 +236,8 @@ export default function ResultsPage() {
           {/* View mode switcher */}
           <div className="flex flex-col gap-1 mb-3">
             {([
-              ["lesson",              "Lesson",          Boolean(manifest?.lesson_plan?.length)],
+              ["lesson",              "Lesson",          Boolean(manifest?.lesson?.steps?.length || manifest?.lesson_plan?.length)],
+              ["construction",        "Construction",    Boolean(manifest?.drawing_json)],
               ["hierarchical_lesson", "Explore Layers",  true],
               ["build_up",            "Build up",        Boolean(manifest?.detail_levels && Object.keys(manifest.detail_levels).length > 0)],
               ["squint",              "Squint",          true],
@@ -254,6 +303,7 @@ export default function ResultsPage() {
                style={{ borderColor: "var(--border)" }}>
             {([
               ["lesson",              "Lesson"],
+              ["construction",        "Construction"],
               ["hierarchical_lesson", "Layers"],
               ["build_up",            "Build up"],
               ["squint",              "Squint"],
@@ -281,67 +331,30 @@ export default function ResultsPage() {
               manifest={manifest}
               referenceUrl={referenceUrl}
             />
+          ) : viewMode === "lesson" && manifest?.lesson?.steps?.length ? (
+            <div className="flex-1 flex flex-col min-h-0 p-4">
+              <GuidedLessonPlayer
+                jobId={jobId}
+                referenceUrl={referenceUrl}
+                manifest={manifest}
+                onOpenCritique={() => setUIViewMode("critique")}
+              />
+            </div>
           ) : viewMode === "lesson" && manifest?.lesson_plan && manifest.lesson_plan.length > 0 ? (
             <LessonPlayer
               manifest={manifest}
               referenceUrl={referenceUrl}
               videoReady={videoReady}
             />
+          ) : viewMode === "construction" ? (
+            <div className="flex-1 flex flex-col min-h-0 p-4">
+              <ConstructionView jobId={jobId} referenceUrl={referenceUrl} manifest={manifest} />
+            </div>
           ) : viewMode === "critique" ? (
             <CritiquePanel jobId={jobId} referenceUrl={referenceUrl} />
           ) : viewMode === "squint" ? (
             <SquintSimulator referenceUrl={referenceUrl} notanUrl={notanUrl} />
           ) : (<>
-
-          {/* About Your Image — grounded in this job's own analysis (Claude
-              vision call), not a per-medium template. Absent entirely when
-              ANTHROPIC_API_KEY isn't configured on the backend. */}
-          {manifest?.personal_observations && (
-            <div className="p-4 border-b flex-shrink-0" style={{ borderColor: "var(--border)" }}>
-              <p className="text-xs font-semibold uppercase tracking-widest mb-2"
-                 style={{ color: "var(--text-dim)" }}>About Your Image</p>
-              <p className="text-sm leading-relaxed" style={{ color: "var(--text)" }}>
-                {manifest.personal_observations}
-              </p>
-            </div>
-          )}
-
-          {/* Video — A3: show pending state during progressive delivery */}
-          <div className="p-4 border-b flex-shrink-0" style={{ borderColor: "var(--border)" }}>
-            <p className="text-xs font-semibold uppercase tracking-widest mb-2"
-               style={{ color: "var(--text-dim)" }}>Tutorial Video</p>
-            {videoReady ? (
-              <>
-                <video ref={videoRef} src={absUrl(manifest!.video!)} controls className="w-full rounded-xl"
-                       style={{ background: "#000", maxHeight: 380 }} />
-                {manifest?.video_chapters && manifest.video_chapters.length > 0 && (
-                  <div className="flex gap-1.5 flex-wrap mt-2">
-                    {manifest.video_chapters.map(ch => (
-                      <button
-                        key={ch.order}
-                        onClick={() => {
-                          if (videoRef.current) {
-                            videoRef.current.currentTime = ch.start_sec;
-                            videoRef.current.play();
-                          }
-                        }}
-                        className="px-2.5 py-1 rounded text-xs border transition-colors"
-                        style={{ borderColor: "var(--border)", color: "var(--text-dim)" }}>
-                        {ch.name}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className="w-full rounded-xl flex items-center justify-center"
-                   style={{ background: "var(--surface)", height: 180 }}>
-                <p className="text-sm" style={{ color: "var(--text-dim)" }}>
-                  Video is still rendering…
-                </p>
-              </div>
-            )}
-          </div>
 
           {/* ── Hierarchical detail slider ──────────────────────────────── */}
           {manifest?.detail_levels && Object.keys(manifest.detail_levels).length > 0 && (
@@ -363,18 +376,151 @@ export default function ResultsPage() {
           )}
 
           {/* ── Main image display ──────────────────────────────────────── */}
-          <div className="p-4 flex-1">
+          <div className="p-4 flex-1 flex flex-col min-h-0">
+            {viewMode === "hierarchical_lesson" ? (
+              /* Phase 2: the real workspace — one OpenSeadragon viewer drives
+                 every compare mode (Reference / Overlay / Before-After split /
+                 synced Side-by-Side) plus region hover/click selection against
+                 the merge-tree hierarchy. No duplicated viewer logic. */
+              compareMode === "side_by_side" ? (
+                <div className="flex gap-3 flex-1 min-h-0">
+                  {([["reference", true], ["overlay", false]] as const).map(([m, primary]) => (
+                    <div key={m} className="flex-1 min-w-0 flex flex-col">
+                      <p className="label-xs mb-1">{primary ? "Reference" : "Analysis"}</p>
+                      <Viewer
+                        jobId={jobId}
+                        referenceUrl={referenceUrl}
+                        overlays={activeAssets}
+                        opacity={1}
+                        mode={m}
+                        syncKey={`sbs:${jobId}`}
+                        hideControls={!primary}
+                        imageWidth={manifest?.image?.width}
+                        imageHeight={manifest?.image?.height}
+                        labelMapUrl={manifest?.label_maps?.[String(detailLevel)]
+                          ? outputUrl(manifest.label_maps[String(detailLevel)]) : undefined}
+                        regionsUrl={outputUrl(manifest?.regions_json ?? `${jobId}/regions.json`)}
+                        manifest={manifest}
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <Viewer
+                  jobId={jobId}
+                  referenceUrl={referenceUrl}
+                  overlays={activeAssets}
+                  opacity={compareMode === "overlay" ? opacity : 1}
+                  mode={compareMode === "reference" ? "reference"
+                      : compareMode === "split" ? "split" : "overlay"}
+                  imageWidth={manifest?.image?.width}
+                  imageHeight={manifest?.image?.height}
+                  labelMapUrl={manifest?.label_maps?.[String(detailLevel)]
+                    ? outputUrl(manifest.label_maps[String(detailLevel)]) : undefined}
+                  regionsUrl={outputUrl(manifest?.regions_json ?? `${jobId}/regions.json`)}
+                  manifest={manifest}
+                  onSelectArea={handleSelectArea}
+                  onClearArea={clearLocalAnalysis}
+                  analyzingArea={analyzingArea}
+                />
+              )
+            ) : (
             <ImageDisplay
               compareMode={compareMode}
               analysisUrl={analysisUrl}
-              activeAssets={viewMode === "classic_analysis" ? [] : activeAssets}
+              activeAssets={[]}
               referenceUrl={referenceUrl}
               opacity={opacity}
               imageWidth={manifest?.image?.width}
               imageHeight={manifest?.image?.height}
-              title={viewMode === "classic_analysis" && selected ? selected.title : (currentLevelData?.label ?? "")}
+              title={viewMode === "classic_analysis" && selected ? selected.title : (LEVEL_LABELS[detailLevel] ?? currentLevelData?.label ?? "")}
               palette={manifest?.palette}
             />
+            )}
+
+            {/* "Analyse this area" result — a closer, real local re-analysis of
+                the rectangle the student dragged on the viewer, cropped from
+                the full-resolution reference (never the preview). */}
+            {viewMode === "hierarchical_lesson" && (localAnalysis || localAnalysisError) && (
+              <div className="mt-3 p-3 rounded-xl flex gap-3 items-start"
+                   style={{ border: "1px solid var(--border)", background: "var(--surface)" }}>
+                {localAnalysisError ? (
+                  <p className="text-sm flex-1" style={{ color: "var(--text-dim)" }}>
+                    Local analysis failed: {localAnalysisError}
+                  </p>
+                ) : localAnalysis && (
+                  <>
+                    <img
+                      src={outputUrl(localAnalysis.assets.outlines ?? localAnalysis.assets.colours ?? undefined)}
+                      alt="Close-up analysis of the selected area"
+                      className="rounded-lg flex-shrink-0"
+                      style={{ width: 160, height: "auto", border: "1px solid var(--border)", background: "var(--paper)" }}
+                    />
+                    <div className="flex-1 text-xs">
+                      <p className="font-medium mb-1" style={{ color: "var(--ink)" }}>
+                        Analysed area — {Math.round(localAnalysis.bbox.w)}×{Math.round(localAnalysis.bbox.h)}px
+                      </p>
+                      <p style={{ color: "var(--text-dim)" }}>
+                        A closer look at just this region, worked out the same way as the
+                        full lesson — outlines, values and colour masses, scaled up for detail.
+                      </p>
+                      {localAnalysis.drawing_summary && (
+                        <p className="mt-1" style={{ color: "var(--text)" }}>
+                          Construction here: {localAnalysis.drawing_summary.n_landmarks} landmarks,
+                          a {localAnalysis.drawing_summary.envelope_segments}-sided envelope
+                          {typeof localAnalysis.drawing_summary.occupied_fraction === "number"
+                            && `, subject fills ~${Math.round(localAnalysis.drawing_summary.occupied_fraction * 100)}% of the crop`}.
+                          {localAnalysis.drawing_summary.silhouette_cause
+                            && ` The outer edge reads as ${localAnalysis.drawing_summary.silhouette_cause}.`}
+                        </p>
+                      )}
+                      {localAnalysis.assets.drawing_json && localAnalysis.assets.crop && (
+                        <button onClick={() => setLocalConstruction(localAnalysis)}
+                                className="btn-ghost mt-2" style={{ padding: "4px 12px", fontSize: 12 }}>
+                          Learn to build this area step by step →
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
+                <button onClick={clearLocalAnalysis} title="Clear"
+                        style={{ background: "none", border: "none", cursor: "pointer",
+                                 color: "var(--text-dim)", flexShrink: 0 }}>✕</button>
+              </div>
+            )}
+
+            {/* §14 dot-to-dot: pick a difficulty, peek the solution */}
+            {viewMode === "classic_analysis" && selected?.key === "dot_to_dot"
+              && manifest?.dot_to_dot_variants
+              && Object.keys(manifest.dot_to_dot_variants).length > 0 && (
+              <div className="mt-3 flex items-center gap-2 flex-wrap">
+                <span className="text-xs" style={{ color: "var(--text-dim)" }}>Difficulty</span>
+                {(["simple", "standard", "detailed"] as const).map(diff => {
+                  const v = manifest.dot_to_dot_variants?.[diff];
+                  return v && (
+                    <button key={diff} onClick={() => setDotDifficulty(diff)}
+                            className="px-2.5 py-1 rounded text-xs"
+                            style={{
+                              background: dotDifficulty === diff ? "var(--accent)" : "var(--surface)",
+                              color: dotDifficulty === diff ? "var(--paper)" : "var(--text-dim)",
+                              border: "1px solid var(--border)", cursor: "pointer",
+                            }}>
+                      {diff === "simple" ? "Simple" : diff === "standard" ? "Standard" : "Detailed"}
+                      {" · "}{v.n_dots} dots
+                    </button>
+                  );
+                })}
+                <button onClick={() => setDotSolution(s => !s)}
+                        className="px-2.5 py-1 rounded text-xs ml-2"
+                        style={{
+                          background: dotSolution ? "var(--sage)" : "var(--surface)",
+                          color: dotSolution ? "var(--paper)" : "var(--text-dim)",
+                          border: "1px solid var(--border)", cursor: "pointer",
+                        }}>
+                  {dotSolution ? "Hide solution" : "Show solution"}
+                </button>
+              </div>
+            )}
 
             {/* A2: Classic page WHY explanation — only in classic_analysis mode */}
             {viewMode === "classic_analysis" && selected && compareMode === "analysis" && (
@@ -409,6 +555,66 @@ export default function ResultsPage() {
                 ))}
               </div>
             )}
+
+            {/* Secondary material lives BELOW the image, collapsed — the
+                workspace opens on the image, not on a video (brief §19/O). */}
+            {manifest?.personal_observations && (
+              <details className="mt-4 rounded-xl overflow-hidden"
+                       style={{ border: "1px solid var(--border)" }}>
+                <summary className="px-4 py-3 text-xs font-semibold uppercase tracking-widest cursor-pointer select-none"
+                         style={{ color: "var(--text-dim)" }}>
+                  About your image
+                </summary>
+                <p className="px-4 pb-4 text-sm leading-relaxed" style={{ color: "var(--text)" }}>
+                  {manifest.personal_observations}
+                </p>
+              </details>
+            )}
+
+            <details className="mt-3 rounded-xl overflow-hidden"
+                     style={{ border: "1px solid var(--border)" }}>
+              <summary className="px-4 py-3 text-xs font-semibold uppercase tracking-widest cursor-pointer select-none"
+                       style={{ color: "var(--text-dim)" }}>
+                Tutorial video {videoReady ? "" : isAnalysisReady ? "· rendering…" : "· not available"}
+              </summary>
+              <div className="px-4 pb-4">
+                {videoReady ? (
+                  <>
+                    <video ref={videoRef} src={absUrl(manifest!.video!)} controls className="w-full rounded-xl"
+                           style={{ background: "#000", maxHeight: 380 }} />
+                    {manifest?.video_chapters && manifest.video_chapters.length > 0 && (
+                      <div className="flex gap-1.5 flex-wrap mt-2">
+                        {manifest.video_chapters.map(ch => (
+                          <button
+                            key={ch.order}
+                            onClick={() => {
+                              if (videoRef.current) {
+                                videoRef.current.currentTime = ch.start_sec;
+                                videoRef.current.play();
+                              }
+                            }}
+                            className="px-2.5 py-1 rounded text-xs border transition-colors"
+                            style={{ borderColor: "var(--border)", color: "var(--text-dim)" }}>
+                            {ch.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="w-full rounded-xl flex items-center justify-center"
+                       style={{ background: "var(--surface)", height: 120 }}>
+                    <p className="text-sm" style={{ color: "var(--text-dim)" }}>
+                      {/* Honest state: only claim "rendering" while extras are
+                          actually still being generated (analysis_ready). */}
+                      {isAnalysisReady
+                        ? "Video is still rendering — it will appear here."
+                        : "Video isn't available for this project."}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </details>
           </div>
           </>)}
         </section>
@@ -425,6 +631,36 @@ export default function ResultsPage() {
           />
         )}
       </div>
+
+      {/* Focused local construction — the §9 "local lesson": the child crop's
+          own step-by-step drawing construction, over a modal covering the
+          workspace. Reuses ConstructionView with the crop's drawing + image. */}
+      {localConstruction?.assets.drawing_json && localConstruction.assets.crop && (
+        <div className="fixed inset-0 z-50 flex flex-col p-4"
+             style={{ background: "rgba(36,31,22,0.55)" }}>
+          <div className="flex-1 min-h-0 flex flex-col rounded-2xl overflow-hidden p-4"
+               style={{ background: "var(--bg)", border: "1px solid var(--border-strong)" }}>
+            <div className="flex items-center justify-between mb-3 flex-shrink-0">
+              <p className="font-display text-lg" style={{ color: "var(--ink)" }}>
+                Building this area — {Math.round(localConstruction.bbox.w)}×{Math.round(localConstruction.bbox.h)}px
+                <span className="text-sm ml-2" style={{ color: "var(--text-dim)" }}>
+                  a focused construction of just your selection
+                </span>
+              </p>
+              <button onClick={() => setLocalConstruction(null)} className="btn-ghost"
+                      style={{ padding: "6px 16px", fontSize: 13 }}>Close ✕</button>
+            </div>
+            <div className="flex-1 min-h-0">
+              <ConstructionView
+                jobId={jobId}
+                referenceUrl={outputUrl(localConstruction.assets.crop)}
+                drawingUrl={outputUrl(localConstruction.assets.drawing_json)}
+                manifest={null}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

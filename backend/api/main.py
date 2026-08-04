@@ -25,7 +25,14 @@ from ..schemas.jobs import (
 from ..teaching.mediums import MEDIUMS, get_medium as _get_medium_cfg
 from ..teaching.mixing import list_brands
 
-app = FastAPI(title="Painting Instructor API", version="0.3.0")
+from ..capabilities import registry_payload, validate_registry
+
+app = FastAPI(title="Painting Instructor API", version="0.4.0")
+
+# The registry is code — fail loudly at import time if its invariants break.
+_registry_problems = validate_registry()
+if _registry_problems:
+    raise RuntimeError(f"Capability registry invalid: {_registry_problems}")
 
 # ── CORS ─────────────────────────────────────────────────────────────────────
 _origins = os.getenv(
@@ -43,7 +50,33 @@ app.add_middleware(
 # ── Static file serving ───────────────────────────────────────────────────────
 OUTPUTS_DIR = outputs_root()
 OUTPUTS_DIR.mkdir(exist_ok=True)
-app.mount("/outputs", StaticFiles(directory=str(OUTPUTS_DIR)), name="outputs")
+
+
+class _CorpStaticFiles(StaticFiles):
+    """Serve /outputs with Cross-Origin-Resource-Policy: cross-origin.
+
+    The reference image and analysis assets are served from the API origin
+    (:8000) but consumed on the frontend origin (:3000), including inside the
+    OpenSeadragon WebGL viewer and canvas readbacks (label-map decode, mask
+    overlays). Without CORP the browser blocks the cross-origin resource in
+    those contexts (net::ERR_FAILED) — and a plain <img> pre-caching the same
+    URL without CORS poisons the cache for the viewer's later CORS request.
+    Setting CORP (alongside the app's CORS middleware) makes every asset
+    usable in every context, cache mode included."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
+        response.headers["Vary"] = "Origin"
+        # no-cache = always revalidate (cheap 304 via the ETag StaticFiles
+        # already sends). Without this, browsers heuristically cache job
+        # assets and keep showing STALE drawing.json/PNGs after a job is
+        # re-analysed — outputs are mutable, not immutable content.
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/outputs", _CorpStaticFiles(directory=str(OUTPUTS_DIR)), name="outputs")
 
 UPLOAD_DIR = OUTPUTS_DIR / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -104,6 +137,31 @@ async def create_job(
     img_path = UPLOAD_DIR / f"{job_id}{suffix}"
     img_path.write_bytes(await file.read())
 
+    # Every upload is a resumable project (brief §18). The worker copies the
+    # untouched original to outputs/{job}/reference{suffix}; we record that
+    # canonical location now. A store failure must never block the job.
+    try:
+        from ..projects import store as project_store
+        project_store.create_project(
+            job_id=job_id,
+            reference_path=f"{job_id}/reference{suffix}",
+            medium=medium,
+            skill_level=skill_level,
+            value_zones=value_zones,
+            settings={
+                "palette_size":       resolved_palette,
+                "initial_view_level": initial_view_level,
+                "region_complexity":  region_complexity,
+                "texture_detail":     texture_detail,
+                "background_detail":  background_detail,
+                "brand_id":           brand_id,
+                "user_id":            user_id,
+            },
+        )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("project row creation failed", exc_info=True)
+
     run_pipeline.apply_async(
         args=[str(img_path), job_id],
         kwargs={
@@ -125,15 +183,63 @@ async def create_job(
 
 
 # ── GET /jobs/{job_id} ────────────────────────────────────────────────────────
+def _manifest_fallback(job_id: str) -> JobResponse | None:
+    """Resume path (brief §18): the manifest on disk is the durable record of
+    a finished job. Celery results expire from Redis (default 24 h) and Redis
+    may have restarted — a saved project must still open, so a final manifest
+    answers 'completed' without consulting the broker at all."""
+    m_path = outputs_root() / job_id / "manifest.json"
+    if not m_path.exists():
+        return None
+    try:
+        m = json.loads(m_path.read_text())
+    except Exception:
+        return None
+    if m.get("status") == "analysis_ready":
+        # Prelim manifest: analysis done, extras possibly still rendering —
+        # only used when the broker no longer knows the job.
+        return JobResponse(
+            job_id=job_id, status="processing", progress=80, step="analysis_ready",
+            message="Analysis ready — extras may still be rendering",
+            analysis_ready=True,
+        )
+    return JobResponse(
+        job_id=job_id, status="completed", progress=100, step="completed",
+        message="Tutorial ready",
+        result=JobResult(
+            manifest=f"/outputs/{job_id}/manifest.json",
+            pages=[f"/outputs/{p}" for p in m.get("pages", [])],
+            video=f"/outputs/{m['video']}" if m.get("video") else None,
+            pdf=f"/outputs/{m['pdf']}" if m.get("pdf") else None,
+        ),
+    )
+
+
 @app.get("/jobs/{job_id}", response_model=JobResponse)
 def get_job(job_id: str) -> JobResponse:
     """Poll job status. Returns canonical status + progress + result when done."""
     from celery.result import AsyncResult
 
-    r = AsyncResult(job_id, app=celery_app)
-    state = r.state
+    # Durable fast path: a FINAL manifest on disk means completed, regardless
+    # of what (or whether) the result backend remembers.
+    disk = _manifest_fallback(job_id)
+    if disk is not None and disk.status == "completed":
+        return disk
+
+    try:
+        r = AsyncResult(job_id, app=celery_app)
+        state = r.state
+    except Exception:
+        # Result backend unreachable — fall back to whatever disk knows.
+        return disk or JobResponse(
+            job_id=job_id, status="queued", progress=0, step="queued",
+            message="Waiting to start",
+        )
 
     if state in ("PENDING", "RECEIVED"):
+        # An expired/forgotten job that reached analysis_ready still resumes.
+        if disk is not None:
+            return disk
         return JobResponse(job_id=job_id, status="queued", progress=0, step="queued", message="Waiting to start")
 
     if state in ("STARTED", "PROGRESS"):
@@ -223,6 +329,16 @@ async def critique_job(job_id: str, file: UploadFile, user_id: str | None = Form
 
     from ..critique.engine import critique_attempt, save_critique
 
+    # Drawing analysis (subject bounds / silhouette) for the structural
+    # comparison, if this job produced one. Missing/unreadable is fine.
+    drawing = None
+    drawing_path = job_out / "drawing.json"
+    if drawing_path.exists():
+        try:
+            drawing = json.loads(drawing_path.read_text())
+        except Exception:
+            drawing = None
+
     try:
         result = critique_attempt(
             reference_path=reference,
@@ -230,6 +346,7 @@ async def critique_job(job_id: str, file: UploadFile, user_id: str | None = Form
             out_dir=attempt_dir,
             n_value_bands=n_bands,
             medium=medium,
+            drawing=drawing,
         )
     except Exception as exc:
         raise HTTPException(500, f"Critique failed: {exc}")
@@ -248,6 +365,22 @@ async def critique_job(job_id: str, file: UploadFile, user_id: str | None = Form
         except Exception:
             pass
 
+    # Record the attempt on the project so progress survives the session
+    # (save/continue, brief §18). Never let this break the critique response.
+    try:
+        from ..projects import store as project_store
+        project = project_store.get_project_by_job(job_id)
+        if project:
+            project_store.add_attempt(
+                project["id"],
+                path=str(attempt_path.relative_to(outputs_root())),
+                critique={"priority": result.get("priority"),
+                          "metric_scores": result.get("metric_scores")},
+            )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("attempt recording failed", exc_info=True)
+
     # Convert filesystem paths to /outputs URLs for the frontend
     result["assets"] = {k: _path_to_url(v, job_id) for k, v in result["assets"].items()}
     result["attempt_image"] = _path_to_url(str(attempt_path), job_id)
@@ -264,6 +397,109 @@ def download_pdf(job_id: str):
     if not pdf_path.exists():
         raise HTTPException(404, "PDF not ready yet")
     return FileResponse(pdf_path, media_type="application/pdf", filename="tutorial_book.pdf")
+
+
+# ── Projects: save & continue (brief §18 — Phase-1 foundation) ───────────────
+from pydantic import BaseModel as _BaseModel
+
+
+class _ProjectPatch(_BaseModel):
+    title: str | None = None
+    current_capability: str | None = None
+
+
+class _StepStatus(_BaseModel):
+    step_id: str
+    status: str  # pending|in_progress|completed|skipped
+    data: dict = {}
+
+
+class _CheckpointUpsert(_BaseModel):
+    type: str    # schemas/lesson.py CheckpointType
+    status: str = "open"
+    data: dict = {}
+    checkpoint_id: str | None = None
+
+
+@app.get("/projects")
+def list_projects(limit: int = 20):
+    from ..projects import store as project_store
+    return project_store.list_projects(limit=min(max(limit, 1), 100))
+
+
+@app.get("/projects/by-job/{job_id}")
+def get_project_by_job(job_id: str):
+    """Resolve the project for a job (the workspace knows the job id, not the
+    project id) so the lesson player can read/write progress + checkpoints."""
+    from ..projects import store as project_store
+    project = project_store.get_project_by_job(job_id)
+    if project is None:
+        raise HTTPException(404, "No project for this job")
+    project["lesson_progress"] = project_store.get_lesson_progress(project["id"])
+    project["checkpoints"]     = project_store.get_checkpoints(project["id"])
+    return project
+
+
+@app.get("/projects/{project_id}")
+def get_project(project_id: str):
+    from ..projects import store as project_store
+    project = project_store.get_project(project_id)
+    if project is None:
+        raise HTTPException(404, "Project not found")
+    project["lesson_progress"] = project_store.get_lesson_progress(project_id)
+    project["checkpoints"]     = project_store.get_checkpoints(project_id)
+    project["corrections"]     = project_store.get_corrections(project_id)
+    project["attempts"]        = project_store.get_attempts(project_id)
+    project["selections"]      = project_store.get_selections(project_id)
+    return project
+
+
+@app.patch("/projects/{project_id}")
+def patch_project(project_id: str, body: _ProjectPatch):
+    from ..projects import store as project_store
+    if body.current_capability is not None:
+        from ..capabilities import resolve_capability_id
+        if resolve_capability_id(body.current_capability) is None:
+            raise HTTPException(422, f"Unknown capability: {body.current_capability!r}")
+    project = project_store.update_project(
+        project_id, title=body.title, current_capability=body.current_capability,
+    )
+    if project is None:
+        raise HTTPException(404, "Project not found")
+    return project
+
+
+@app.post("/projects/{project_id}/progress")
+def set_progress(project_id: str, body: _StepStatus):
+    from ..projects import store as project_store
+    if project_store.get_project(project_id) is None:
+        raise HTTPException(404, "Project not found")
+    try:
+        return project_store.set_step_status(project_id, body.step_id, body.status, body.data)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+
+@app.post("/projects/{project_id}/checkpoints")
+def upsert_checkpoint(project_id: str, body: _CheckpointUpsert):
+    from ..projects import store as project_store
+    if project_store.get_project(project_id) is None:
+        raise HTTPException(404, "Project not found")
+    try:
+        return project_store.upsert_checkpoint(
+            project_id, body.type, body.status, body.data, body.checkpoint_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+
+@app.get("/capabilities")
+def get_capabilities():
+    """The shared capability contract: what the product can do, which
+    interaction modes each capability supports, pipeline step metadata and
+    detail-level labels. The landing page, gallery and workspace are all
+    generated from / validated against this payload."""
+    return registry_payload()
 
 
 @app.get("/brands")
@@ -299,6 +535,51 @@ def get_medium_config(medium: str):
     if medium not in VALID_MEDIUMS:
         raise HTTPException(404, f"Unknown medium: {medium!r}")
     return _get_medium_cfg(medium)
+
+
+# ── POST /jobs/{job_id}/local-analysis ────────────────────────────────────────
+# Phase 2 leftover: rectangle region selection + "Analyse this area". Crops
+# ONLY from the untouched outputs/{job_id}/reference.* file (never a preview
+# or generated overlay) and runs the same hierarchical analysis the
+# whole-image lesson uses, scoped to that crop. See backend/analysis/local.py.
+class _LocalAnalysisBBox(_BaseModel):
+    x: float
+    y: float
+    w: float
+    h: float
+
+
+@app.post("/jobs/{job_id}/local-analysis")
+def local_analysis(job_id: str, body: _LocalAnalysisBBox):
+    """Run a local, zoomed-in analysis over a student-selected rectangle
+    (ORIGINAL image px). Returns asset paths plus the offset/scale needed to
+    map the local result's pixels back onto the parent image."""
+    from ..analysis.local import run_local_analysis, LocalAnalysisError
+
+    try:
+        result = run_local_analysis(job_id, body.model_dump())
+    except FileNotFoundError:
+        raise HTTPException(404, "Reference image not found — has the job finished analysing?")
+    except LocalAnalysisError as exc:
+        raise HTTPException(422, str(exc))
+
+    # Persist the deeper-look selection on the project so it survives a resume
+    # (brief §18: local deep analyses are part of the saved state). Best-effort.
+    try:
+        from ..projects import store as project_store
+        project = project_store.get_project_by_job(job_id)
+        if project:
+            project_store.add_selection(project["id"], {
+                "selection_id": result.get("selection_id"),
+                "bbox": result.get("bbox"),
+                "offset": result.get("offset"),
+                "scale": result.get("scale"),
+            })
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("selection recording failed", exc_info=True)
+
+    return result
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

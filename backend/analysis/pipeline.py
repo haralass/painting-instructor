@@ -32,6 +32,9 @@ def run_hierarchical_analysis(
     texture_detail: bool = True,
     background_detail: bool = False,
     region_complexity: int = 3,  # A6: 1–5, controls hierarchy resolution independently of palette
+    subj_mask: np.ndarray | None = None,   # Phase 3: float subject mask for drawing construction
+    depth_lbl: np.ndarray | None = None,   # Phase 3: depth planes for edge-cause attribution
+    job_id: str | None = None,
 ) -> dict:
     """
     Full hierarchical analysis pipeline.
@@ -72,6 +75,27 @@ def run_hierarchical_analysis(
     # Assign value_zone region_ids back to zone objects
     for z in zones:
         z.region_ids = [r.id for r in regions if r.value_zone == z.id]
+
+    # ── 3b. Persist per-level label maps (RGB-encoded region ids) ────────────
+    # The viewer resolves a click straight to a Region: pixel → id via
+    # id+1 = R + G·256 (0 = no region), then regions.json for the metadata.
+    # Lossless PNG; same pixel grid as every other analysis output (§21.D).
+    label_map_paths: dict[int, str] = {}
+    for lvl in range(1, 6):
+        lm = label_maps.get(f"l{lvl}")
+        if lm is None:
+            continue
+        lut = np.zeros(int(lm.max()) + 2, dtype=np.int32)  # 0 = background/none
+        for r in regions:
+            if r.scale == f"l{lvl}" and 0 <= r.source_label <= lm.max():
+                lut[r.source_label] = r.id + 1
+        ids = lut[np.clip(lm, 0, len(lut) - 1)]
+        rgb = np.zeros((*ids.shape, 3), dtype=np.uint8)
+        rgb[..., 0] = ids & 0xFF
+        rgb[..., 1] = (ids >> 8) & 0xFF
+        p = str(out_dir / f"level_{lvl}_labelmap.png")
+        Image.fromarray(rgb).save(p)
+        label_map_paths[lvl] = p
 
     # Assign colour family linked_region_ids
     for f in families:
@@ -178,19 +202,58 @@ def run_hierarchical_analysis(
     except Exception:
         log.warning("render_study_overlay failed", exc_info=True)
 
-    # ── 5d. Smart dot-to-dot from the edge hierarchy (replaces the classic
-    #      fixed-step dots, which numbered noise on textured photos) ─────────
+    # ── 5d. Dot-to-dot placeholder — the REAL numbered exercise is generated
+    #      after the drawing analysis below (it needs the vector paths); this
+    #      only keeps a fallback if that fails. ──────────────────────────────
     dots_path: str | None = None
+    dot_variants: dict = {}
+
+    # ── 5e. Drawing construction analysis (Phase 3) ──────────────────────────
+    # Turn the edges/regions/subject/depth signals into a stored, structured
+    # account of how the drawing is built (bounds → landmarks → envelope →
+    # silhouette → internal structure), in a pedagogical order. Never fatal.
+    drawing_path: str | None = None
+    drawing_dict: dict | None = None
     try:
-        dots_lm = label_maps.get("l3", label_maps.get("l2"))
-        if dots_lm is not None:
-            dots_result = render_smart_dot_to_dot(
-                label_map=dots_lm, W=cache.W, H=cache.H,
-                out_path=out_dir / "dot_to_dot.png",
-            )
-            dots_path = dots_result["path"] if dots_result else None
+        from .drawing import build_drawing_analysis
+        from .edge_cause import attach_edge_causes
+        drawing = build_drawing_analysis(
+            cache=cache, regions=regions, edges=edges,
+            subj_mask=subj_mask, depth_lbl=depth_lbl, zone_map=zone_map,
+            job_id=job_id,
+        )
+        attach_edge_causes(drawing, cache, depth_lbl, zone_map)
+        drawing.source_assets = {
+            "regions": "regions.json", "edges": "edges.json",
+        }
+        drawing_path = str(out_dir / "drawing.json")
+        Path(drawing_path).write_text(drawing.model_dump_json(indent=2))
+        drawing_dict = drawing.model_dump()
     except Exception:
-        log.warning("render_smart_dot_to_dot failed", exc_info=True)
+        drawing_dict = None
+        log.warning("drawing construction analysis failed", exc_info=True)
+
+    # ── 5f. REAL numbered dot-to-dot (brief §14) from the vector paths:
+    #    sequential numbering, dots dense on curves / sparse on straights,
+    #    three difficulties + solution variants. ────────────────────────────
+    if drawing_dict:
+        try:
+            from .dot_to_dot import render_all as render_dot_variants
+            dot_variants = render_dot_variants(drawing_dict, out_dir)
+            if "standard" in dot_variants:
+                dots_path = dot_variants["standard"]["path"]
+        except Exception:
+            log.warning("numbered dot-to-dot failed", exc_info=True)
+    if dots_path is None:
+        # Fallback: the old label-map dots, so the page never goes missing.
+        try:
+            dots_lm = label_maps.get("l3", label_maps.get("l2"))
+            if dots_lm is not None:
+                r = render_smart_dot_to_dot(label_map=dots_lm, W=cache.W, H=cache.H,
+                                            out_path=out_dir / "dot_to_dot.png")
+                dots_path = r["path"] if r else None
+        except Exception:
+            log.warning("render_smart_dot_to_dot fallback failed", exc_info=True)
 
     # ── 6. Write regions JSON ─────────────────────────────────────────────────
     regions_path = out_dir / "regions.json"
@@ -253,7 +316,13 @@ def run_hierarchical_analysis(
         "label_to_region_id":  label_to_region_id,
         "edge_maps":           _edge_map_paths,  # A4: individual maps for frontend sublayer toggles
         "outline_composites":  _outline_composite_paths,  # global composites for lesson_plan resolution
+        "label_maps":          label_map_paths,  # per-level RGB-encoded region ids (viewer click-select)
+        "drawing_json":        drawing_path,     # Phase 3 structured drawing construction
+        "drawing":             drawing_dict,     # in-process dict for the Phase-4 lesson engine
         "paint_by_numbers":    pbn_path,   # hierarchy-based page (replaces classic when both exist)
         "study_overlay":       study_path, # white region contours ON the reference (detail study)
-        "smart_dot_to_dot":    dots_path,  # edge-hierarchy dots (replaces classic when both exist)
+        "smart_dot_to_dot":    dots_path,  # numbered dot-to-dot page (standard difficulty)
+        "dot_to_dot_variants": {k: {"n_dots": v["n_dots"],
+                                     "path": v["path"], "solution": v.get("solution")}
+                                 for k, v in dot_variants.items()},
     }

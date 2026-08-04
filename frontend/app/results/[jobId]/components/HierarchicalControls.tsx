@@ -49,7 +49,7 @@ export default function HierarchicalControls({
              onChange={e => { setDetailLevel(Number(e.target.value)); setViewMode("hierarchical_lesson"); }}
              className="w-full accent-orange-700" />
       <div className="flex justify-between text-xs mt-1" style={{ color: "var(--text-dim)" }}>
-        <span>Foundation</span><span>Full Reference</span>
+        <span>{LEVEL_LABELS[1]}</span><span>{LEVEL_LABELS[5]}</span>
       </div>
 
       {/* Independent layer toggles */}
@@ -120,7 +120,7 @@ export default function HierarchicalControls({
 
       {/* Compare mode */}
       <div className="flex gap-2 mt-2 flex-wrap">
-        {(["analysis", "reference", "side_by_side", "overlay"] as CompareMode[]).map(m => (
+        {(["analysis", "reference", "overlay", "side_by_side", "split"] as CompareMode[]).map(m => (
           <button key={m}
                   onClick={() => setCompareMode(m)}
                   className="px-3 py-1 rounded border text-xs transition-colors"
@@ -132,6 +132,7 @@ export default function HierarchicalControls({
             {m === "analysis"    ? "Analysis"
            : m === "reference"  ? "Reference"
            : m === "side_by_side" ? "Side by Side"
+           : m === "split"      ? "Before/After"
            : "Overlay"}
           </button>
         ))}

@@ -19,6 +19,8 @@ import cv2
 import numpy as np
 from PIL import Image
 
+from . import priority as priority_mod
+
 log = logging.getLogger(__name__)
 
 # Analysis grid — coarse enough that a cell is a paintable "area", fine
@@ -472,8 +474,15 @@ def critique_attempt(
     ref_density = _cell_means(ref_edges)
     att_density = _cell_means(att_edges)
 
+    # Per-cell edge density only means anything when the two images actually
+    # register. On the resize-only fallback the cells hold different parts of
+    # the painting, and the comparison invents confident structural criticism
+    # ("this area is overworked") out of pure misregistration. Same threshold
+    # the priority engine uses to decide it may assert a structural error.
+    structure_reliable = alignment_confidence >= priority_mod.MIN_ALIGN_FOR_STRUCTURE
+
     structure_flags = 0
-    for r in range(GRID):
+    for r in range(GRID) if structure_reliable else ():
         for c in range(GRID):
             rd, ad = ref_density[r, c], att_density[r, c]
             if rd < EDGE_MIN_REFERENCE_DENSITY:
@@ -498,7 +507,10 @@ def critique_attempt(
             })
 
     denom = max(int(np.sum(ref_density >= EDGE_MIN_REFERENCE_DENSITY)), 1)
-    structure_score = float(np.clip(100 * (1 - structure_flags / denom), 0, 100))
+    structure_score = (
+        float(np.clip(100 * (1 - structure_flags / denom), 0, 100))
+        if structure_reliable else None
+    )
 
     # ── 4. Signed diagnostic metrics (additive) ─────────────────────────────
     #   Every metric is a signed error in ~[-1, 1] (0 = matches the reference),
@@ -512,7 +524,13 @@ def critique_attempt(
     )
     metric_scores = {k: round(100.0 * (1.0 - min(abs(v), 1.0)), 1) for k, v in errors.items()}
 
-    overall = round(0.45 * value_score + 0.3 * colour_score + 0.25 * structure_score, 1)
+    # Without a trustworthy structure score, redistribute its 0.25 across the
+    # two measurements that survive an imperfect registration.
+    overall = round(
+        0.45 * value_score + 0.3 * colour_score + 0.25 * structure_score
+        if structure_reliable else (0.6 * value_score + 0.4 * colour_score),
+        1,
+    )
 
     # Rank worst-first; the student should fix values before colour.
     _KIND_PRIORITY = {"value": 0, "structure": 1, "temperature": 2, "saturation": 3}
@@ -549,8 +567,18 @@ def critique_attempt(
             "overall":   overall,
             "values":    round(value_score, 1),
             "colour":    round(colour_score, 1),
-            "structure": round(structure_score, 1),
+            "structure": round(structure_score, 1) if structure_reliable else None,
         },
+        # Null structure is "we could not measure this", not "you scored zero".
+        # The UI needs to say which, or a beginner reads a failed registration
+        # as a failed drawing.
+        "structure_measured": structure_reliable,
+        "structure_unmeasured_reason": None if structure_reliable else (
+            "The photo of your painting could not be registered against the "
+            "reference (different crop, angle or lighting), so placement and "
+            "proportion were not scored. Values and colour still are. "
+            "Shoot the canvas square-on and fill the frame for a structure score."
+        ),
         "feedback": feedback,
         "priority": priority,
         "secondary": secondary,

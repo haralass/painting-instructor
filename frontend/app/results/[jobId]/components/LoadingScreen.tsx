@@ -41,10 +41,18 @@ export default function LoadingScreen({ jobStatus }: { jobStatus: JobStatus }) {
               Laying in your <em className="text-gradient">lesson</em>
             </h2>
             <p className="text-base mb-2" style={{ color: "var(--text)" }}>
-              {STEP_LABELS[jobStatus.step] ?? jobStatus.message ?? "Processing…"}
+              {/* Queued behind other people: say so plainly. A generic
+                  "Processing…" on a shared instance reads as stuck. */}
+              {jobStatus.status === "queued" && jobStatus.queue_position
+                ? (jobStatus.queue_position === 1
+                    ? "You are next — the worker is finishing another painting"
+                    : `You are number ${jobStatus.queue_position} in the queue`)
+                : STEP_LABELS[jobStatus.step] ?? jobStatus.message ?? "Processing…"}
             </p>
             <p className="text-sm mb-6" style={{ color: "var(--text-dim)" }}>
-              {jobStatus.progress > 0 ? `${jobStatus.progress}% complete` : "Starting…"}
+              {jobStatus.status === "queued" && jobStatus.queue_position
+                ? "One painting is analysed at a time — this will start on its own"
+                : jobStatus.progress > 0 ? `${jobStatus.progress}% complete` : "Starting…"}
             </p>
             <div className="h-2 w-full rounded-full overflow-hidden" style={{ background: "var(--border)" }}>
               <div className="h-full rounded-full progress-shimmer transition-all duration-700"

@@ -48,6 +48,13 @@ type Props = {
   analyzingArea?: boolean;
 };
 
+// Outline / edge assets are greyscale line maps on an opaque white ground
+// (level_N_outlines.png, level_N_edges_*.png). They are meant to read as ink
+// over the layer below, not to replace it.
+function isInkLayer(url: string): boolean {
+  return /\/level_\d+_(outlines|edges_[a-z]+)\.png(\?|$)/.test(url);
+}
+
 // ── Cross-viewer pan/zoom sync (side-by-side) ────────────────────────────────
 const syncGroups = new Map<string, Set<OpenSeadragon.Viewer>>();
 function joinSync(key: string, viewer: OpenSeadragon.Viewer) {
@@ -318,6 +325,12 @@ export default function Viewer({
     overlays.forEach(url => {
       viewer.addTiledImage({
         tileSource: { type: "image", url }, opacity: effOpacity, error: () => {},
+        // Line maps (outlines, edge sublayers) are saved as 8-bit greyscale
+        // with an opaque WHITE ground, so stacking one at full opacity paints
+        // over every layer beneath it — switch on Colours + Outlines together
+        // and the colours vanish. "multiply" makes white a no-op and keeps the
+        // dark lines, i.e. ink drawn over the layers below.
+        compositeOperation: isInkLayer(url) ? "multiply" : undefined,
         success: (ev: unknown) => {
           const item = (ev as { item?: OpenSeadragon.TiledImage }).item;
           if (item && modeRef.current === "split") applyClip(item);

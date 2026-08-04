@@ -8,6 +8,7 @@
 // writes to — no separate state.
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { withUserId } from "../lib/user";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -22,7 +23,7 @@ export default function ProjectsPage() {
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    fetch(`${API}/projects?limit=60`)
+    fetch(withUserId(`${API}/projects?limit=60`))
       .then(r => (r.ok ? r.json() : Promise.reject()))
       .then((data: Project[]) => setProjects(Array.isArray(data) ? data.filter(p => p.job_id) : []))
       .catch(() => setFailed(true));

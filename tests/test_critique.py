@@ -304,4 +304,4 @@ class TestCritiqueEndpoint:
             f"/jobs/{job_with_reference}/critique",
             files={"file": ("attempt.txt", io.BytesIO(b"not an image"), "text/plain")},
         )
-        assert res.status_code == 400
+        assert res.status_code == 415  # unsupported media type

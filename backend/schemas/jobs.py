@@ -20,6 +20,10 @@ class JobResponse(BaseModel):
     step: str = ""
     message: str = ""
     analysis_ready: bool = False   # NEW — preliminary manifest available
+    # 1-based place in the worker queue while status is "queued". None means
+    # either not queued or the broker could not be asked — the UI must not
+    # claim a position it does not have.
+    queue_position: Optional[int] = None
     result: Optional[JobResult] = None
     error: Optional[str] = None
 

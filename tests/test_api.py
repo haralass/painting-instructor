@@ -60,8 +60,10 @@ class TestCreateJob:
             files=[_make_upload(b"not-an-image", "file.pdf", "application/pdf")],
             data={"medium": "oil"},
         )
-        assert res.status_code == 400
-        assert "Unsupported image type" in res.json()["detail"]
+        # 415 Unsupported Media Type, not a generic 400 — the request is
+        # well-formed, the media type is the problem.
+        assert res.status_code == 415
+        assert "unsupported image type" in res.json()["detail"].lower()
 
     def test_invalid_medium_rejected(self):
         with patch("backend.workers.tasks.run_pipeline.apply_async", side_effect=_fake_apply_async):

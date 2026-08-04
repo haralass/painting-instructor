@@ -30,6 +30,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
     id                 TEXT PRIMARY KEY,
     job_id             TEXT UNIQUE,
+    user_id            TEXT,
     title              TEXT NOT NULL DEFAULT '',
     reference_path     TEXT NOT NULL DEFAULT '',
     medium             TEXT NOT NULL DEFAULT 'oil',
@@ -98,12 +99,31 @@ def db_path() -> Path:
     return root / "projects.db"
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Additive migrations for databases created before a column existed.
+
+    CREATE TABLE IF NOT EXISTS never alters an existing table, so a db written
+    by an older build keeps its old shape. Each step must leave existing rows
+    intact — projects predating user scoping keep user_id NULL and are simply
+    unowned (see scripts/claim_projects.py).
+    """
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(projects)")}
+    if "user_id" not in cols:
+        conn.execute("ALTER TABLE projects ADD COLUMN user_id TEXT")
+    # Indexes over migrated columns belong here, not in _SCHEMA: that script
+    # runs against the pre-migration table, where the column does not exist yet.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id, updated_at)"
+    )
+
+
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(db_path(), timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=10000")
     conn.executescript(_SCHEMA)
+    _migrate(conn)
     return conn
 
 
@@ -123,31 +143,52 @@ def create_project(
     value_zones: int,
     settings: dict | None = None,
     title: str = "",
+    user_id: str | None = None,
 ) -> dict[str, Any]:
     now = _now()
     project_id = str(uuid.uuid4())
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO projects (id, job_id, title, reference_path, medium, skill_level,"
-            " value_zones, settings_json, created_at, updated_at)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (project_id, job_id, title or f"{medium.title()} painting",
+            "INSERT INTO projects (id, job_id, user_id, title, reference_path, medium,"
+            " skill_level, value_zones, settings_json, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (project_id, job_id, user_id, title or f"{medium.title()} painting",
              reference_path, medium, skill_level, value_zones,
              json.dumps(settings or {}), now, now),
         )
     return get_project(project_id)  # type: ignore[return-value]
 
 
-def get_project(project_id: str) -> Optional[dict[str, Any]]:
+def get_project(project_id: str, user_id: str | None = None) -> Optional[dict[str, Any]]:
+    """Fetch a project, scoped to `user_id` when one is supplied.
+
+    A project belonging to somebody else reads as missing — callers turn that
+    into a 404 so the existence of another learner's work never leaks.
+    """
     with _connect() as conn:
         row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
-    return _row_to_project(row) if row else None
+    return _row_to_project(row) if _visible(row, user_id) else None
 
 
-def get_project_by_job(job_id: str) -> Optional[dict[str, Any]]:
+def get_project_by_job(job_id: str, user_id: str | None = None) -> Optional[dict[str, Any]]:
     with _connect() as conn:
         row = conn.execute("SELECT * FROM projects WHERE job_id = ?", (job_id,)).fetchone()
-    return _row_to_project(row) if row else None
+    return _row_to_project(row) if _visible(row, user_id) else None
+
+
+def _visible(row: sqlite3.Row | None, user_id: str | None) -> bool:
+    """Scoping rule, in one place.
+
+    No user_id on the request (single-user/local use, and every call site that
+    predates scoping) sees everything. A request that identifies itself sees
+    only its own rows — never the unowned legacy ones, so sharing the instance
+    cannot expose whatever was in the db beforehand.
+    """
+    if row is None:
+        return False
+    if user_id is None:
+        return True
+    return row["user_id"] == user_id
 
 
 def _summarize(conn: sqlite3.Connection, project_id: str) -> dict[str, Any]:
@@ -175,11 +216,17 @@ def _summarize(conn: sqlite3.Connection, project_id: str) -> dict[str, Any]:
     return {"completed_steps": completed, "latest_priority": latest_priority}
 
 
-def list_projects(limit: int = 20) -> list[dict[str, Any]]:
+def list_projects(limit: int = 20, user_id: str | None = None) -> list[dict[str, Any]]:
     with _connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM projects ORDER BY updated_at DESC LIMIT ?", (limit,)
-        ).fetchall()
+        if user_id is None:
+            rows = conn.execute(
+                "SELECT * FROM projects ORDER BY updated_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM projects WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?",
+                (user_id, limit),
+            ).fetchall()
         out = []
         for r in rows:
             p = _row_to_project(r)
@@ -212,7 +259,12 @@ def get_selections(project_id: str) -> list[dict[str, Any]]:
 
 
 def update_project(project_id: str, *, title: str | None = None,
-                   current_capability: str | None = None) -> Optional[dict[str, Any]]:
+                   current_capability: str | None = None,
+                   user_id: str | None = None) -> Optional[dict[str, Any]]:
+    # Writes are scoped the same way reads are: another learner's project is
+    # not merely unreadable, it is unwritable, and reads as missing.
+    if get_project(project_id, user_id) is None:
+        return None
     sets, args = ["updated_at = ?"], [_now()]
     if title is not None:
         sets.append("title = ?"); args.append(title)
@@ -223,7 +275,7 @@ def update_project(project_id: str, *, title: str | None = None,
         cur = conn.execute(f"UPDATE projects SET {', '.join(sets)} WHERE id = ?", args)
         if cur.rowcount == 0:
             return None
-    return get_project(project_id)
+    return get_project(project_id, user_id)
 
 
 def _touch(conn: sqlite3.Connection, project_id: str) -> None:

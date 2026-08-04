@@ -26,7 +26,11 @@ type Correction = {
 };
 
 type CritiqueResult = {
-  scores: { overall: number; values: number; colour: number; structure: number };
+  // structure is null when the attempt could not be registered against the
+  // reference — "not measured", which must never render as a score of 0.
+  scores: { overall: number; values: number; colour: number; structure: number | null };
+  structure_measured?: boolean;
+  structure_unmeasured_reason?: string | null;
   feedback: { kind: string; area: string; message: string; tip: string; severity: number }[];
   first_fix: string;
   priority?: Correction;
@@ -139,15 +143,31 @@ export default function CritiquePanel({ jobId, referenceUrl }: { jobId: string; 
             ).map(([label, score]) => (
               <div key={label} className="rounded-xl p-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
                 <p className="text-xs mb-1" style={{ color: "var(--text-dim)" }}>{label}</p>
-                <p className="text-2xl font-bold" style={{ color: score >= 80 ? "var(--accent)" : score >= 55 ? "var(--text)" : "var(--crimson)" }}>
-                  {Math.round(score)}
-                </p>
-                <div className="h-1 rounded-full mt-2 overflow-hidden" style={{ background: "var(--border)" }}>
-                  <div className="h-full rounded-full" style={{ width: `${score}%`, background: "var(--accent)" }} />
-                </div>
+                {score === null ? (
+                  <>
+                    <p className="text-2xl font-bold" style={{ color: "var(--text-dim)" }}>—</p>
+                    <p className="text-[10px] mt-1" style={{ color: "var(--text-dim)" }}>not measured</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-2xl font-bold" style={{ color: score >= 80 ? "var(--accent)" : score >= 55 ? "var(--text)" : "var(--crimson)" }}>
+                      {Math.round(score)}
+                    </p>
+                    <div className="h-1 rounded-full mt-2 overflow-hidden" style={{ background: "var(--border)" }}>
+                      <div className="h-full rounded-full" style={{ width: `${score}%`, background: "var(--accent)" }} />
+                    </div>
+                  </>
+                )}
               </div>
             ))}
           </div>
+
+          {result.structure_unmeasured_reason && (
+            <p className="text-xs leading-relaxed px-3 py-2 rounded-lg"
+               style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text-dim)" }}>
+              {result.structure_unmeasured_reason}
+            </p>
+          )}
 
           {/* Fix this first — the ONE prioritised correction */}
           <div className="rounded-xl p-4" style={{ background: "rgba(180,81,31,0.07)", border: "1px solid rgba(180,81,31,0.28)" }}>

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from ..utils.paths import outputs_root
 
-from fastapi import FastAPI, UploadFile, Form, HTTPException
+from fastapi import FastAPI, Request, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -26,6 +26,14 @@ from ..teaching.mediums import MEDIUMS, get_medium as _get_medium_cfg
 from ..teaching.mixing import list_brands
 
 from ..capabilities import registry_payload, validate_registry
+from .limits import (
+    ALLOWED_TYPES,
+    client_ip,
+    critique_limiter,
+    job_limiter,
+    queue_position,
+    read_image_upload,
+)
 
 app = FastAPI(title="Painting Instructor API", version="0.4.0")
 
@@ -35,14 +43,17 @@ if _registry_problems:
     raise RuntimeError(f"Capability registry invalid: {_registry_problems}")
 
 # ── CORS ─────────────────────────────────────────────────────────────────────
-_origins = os.getenv(
-    "CORS_ORIGINS",
-    "http://localhost:3000,http://127.0.0.1:3000",
-).split(",")
+# The dev origins are always allowed: CORS_ORIGINS *adds* the public tunnel
+# domain rather than replacing them, so putting the app online cannot silently
+# break local development (and every asset 404s in a way that looks like a
+# broken pipeline rather than a CORS policy).
+_DEV_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
+_extra_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+_origins = list(dict.fromkeys(_DEV_ORIGINS + _extra_origins))
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in _origins],
+    allow_origins=_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -81,7 +92,6 @@ app.mount("/outputs", _CorpStaticFiles(directory=str(OUTPUTS_DIR)), name="output
 UPLOAD_DIR = OUTPUTS_DIR / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
 
 # Map Celery states → canonical lowercase status
 _CELERY_TO_STATUS = {
@@ -99,6 +109,7 @@ _CELERY_TO_STATUS = {
 # ── POST /jobs/ ───────────────────────────────────────────────────────────────
 @app.post("/jobs/", response_model=CreateJobResponse)
 async def create_job(
+    request:       Request,
     file:          UploadFile,
     medium:        str = Form("oil"),
     # Accept both palette_size (canonical) and n_colors (backward-compat)
@@ -114,8 +125,12 @@ async def create_job(
     brand_id:           str | None = Form(None),
 ):
     """Upload a reference photo and start the painting instructor pipeline."""
-    if file.content_type not in ALLOWED_TYPES:
-        raise HTTPException(400, f"Unsupported image type: {file.content_type}")
+    # Starting a job costs minutes of ML on a single worker. Refuse early when
+    # the caller is already over budget, but only *charge* them once the upload
+    # has been accepted — a mistyped file should not cost someone their quota.
+    caller = client_ip(request)
+    job_limiter.ensure_capacity(caller)
+    image_bytes = await read_image_upload(file, field="reference photo")
 
     # Resolve palette_size: canonical wins; fall back to n_colors; default 12
     resolved_palette = palette_size or n_colors or 12
@@ -132,10 +147,12 @@ async def create_job(
     except ValueError as exc:
         raise HTTPException(422, str(exc))
 
+    job_limiter.record(caller)
+
     job_id = str(uuid.uuid4())
     suffix = Path(file.filename or "img.jpg").suffix or ".jpg"
     img_path = UPLOAD_DIR / f"{job_id}{suffix}"
-    img_path.write_bytes(await file.read())
+    img_path.write_bytes(image_bytes)
 
     # Every upload is a resumable project (brief §18). The worker copies the
     # untouched original to outputs/{job}/reference{suffix}; we record that
@@ -148,6 +165,7 @@ async def create_job(
             medium=medium,
             skill_level=skill_level,
             value_zones=value_zones,
+            user_id=user_id,
             settings={
                 "palette_size":       resolved_palette,
                 "initial_view_level": initial_view_level,
@@ -240,7 +258,17 @@ def get_job(job_id: str) -> JobResponse:
         # An expired/forgotten job that reached analysis_ready still resumes.
         if disk is not None:
             return disk
-        return JobResponse(job_id=job_id, status="queued", progress=0, step="queued", message="Waiting to start")
+        # Three friends painting at once share one worker. Say where they are
+        # in the line rather than showing a spinner that looks stuck.
+        place = queue_position(job_id)
+        if place and place > 1:
+            message = f"Waiting to start — you are number {place} in the queue"
+        elif place == 1:
+            message = "Waiting to start — you are next"
+        else:
+            message = "Waiting to start"
+        return JobResponse(job_id=job_id, status="queued", progress=0, step="queued",
+                           message=message, queue_position=place)
 
     if state in ("STARTED", "PROGRESS"):
         meta        = r.info or {}
@@ -291,7 +319,8 @@ def get_job(job_id: str) -> JobResponse:
 
 # ── POST /jobs/{job_id}/critique ──────────────────────────────────────────────
 @app.post("/jobs/{job_id}/critique")
-async def critique_job(job_id: str, file: UploadFile, user_id: str | None = Form(None)):
+async def critique_job(request: Request, job_id: str, file: UploadFile,
+                       user_id: str | None = Form(None)):
     """
     Upload a photo of the student's own painting attempt and get localised,
     actionable feedback against this job's reference image. Runs synchronously
@@ -299,8 +328,10 @@ async def critique_job(job_id: str, file: UploadFile, user_id: str | None = Form
     ML models. Each upload gets its own numbered attempt directory, so the
     student can track successive attempts at the same lesson.
     """
-    if file.content_type not in ALLOWED_TYPES:
-        raise HTTPException(400, f"Unsupported image type: {file.content_type}")
+    caller = client_ip(request)
+    critique_limiter.ensure_capacity(caller)
+    attempt_bytes = await read_image_upload(file, field="photo of your painting")
+    critique_limiter.record(caller)
 
     job_out = outputs_root() / job_id
     reference = next(iter(job_out.glob("reference.*")), None)
@@ -314,7 +345,7 @@ async def critique_job(job_id: str, file: UploadFile, user_id: str | None = Form
 
     suffix = Path(file.filename or "attempt.jpg").suffix or ".jpg"
     attempt_path = attempt_dir / f"attempt{suffix}"
-    attempt_path.write_bytes(await file.read())
+    attempt_path.write_bytes(attempt_bytes)
 
     # Medium + value zones from the job's manifest, if it exists yet
     medium, n_bands = "oil", 5
@@ -422,17 +453,24 @@ class _CheckpointUpsert(_BaseModel):
 
 
 @app.get("/projects")
-def list_projects(limit: int = 20):
+def list_projects(limit: int = 20, user_id: str | None = None):
+    """The learner's own projects.
+
+    user_id is a browser-generated identifier, not authentication — it
+    separates people sharing one instance so nobody sees anyone else's
+    paintings or critiques. Access control comes from Cloudflare Access in
+    front of the tunnel (docs/SHARING.md).
+    """
     from ..projects import store as project_store
-    return project_store.list_projects(limit=min(max(limit, 1), 100))
+    return project_store.list_projects(limit=min(max(limit, 1), 100), user_id=user_id)
 
 
 @app.get("/projects/by-job/{job_id}")
-def get_project_by_job(job_id: str):
+def get_project_by_job(job_id: str, user_id: str | None = None):
     """Resolve the project for a job (the workspace knows the job id, not the
     project id) so the lesson player can read/write progress + checkpoints."""
     from ..projects import store as project_store
-    project = project_store.get_project_by_job(job_id)
+    project = project_store.get_project_by_job(job_id, user_id=user_id)
     if project is None:
         raise HTTPException(404, "No project for this job")
     project["lesson_progress"] = project_store.get_lesson_progress(project["id"])
@@ -441,9 +479,9 @@ def get_project_by_job(job_id: str):
 
 
 @app.get("/projects/{project_id}")
-def get_project(project_id: str):
+def get_project(project_id: str, user_id: str | None = None):
     from ..projects import store as project_store
-    project = project_store.get_project(project_id)
+    project = project_store.get_project(project_id, user_id=user_id)
     if project is None:
         raise HTTPException(404, "Project not found")
     project["lesson_progress"] = project_store.get_lesson_progress(project_id)
@@ -455,7 +493,7 @@ def get_project(project_id: str):
 
 
 @app.patch("/projects/{project_id}")
-def patch_project(project_id: str, body: _ProjectPatch):
+def patch_project(project_id: str, body: _ProjectPatch, user_id: str | None = None):
     from ..projects import store as project_store
     if body.current_capability is not None:
         from ..capabilities import resolve_capability_id
@@ -463,6 +501,7 @@ def patch_project(project_id: str, body: _ProjectPatch):
             raise HTTPException(422, f"Unknown capability: {body.current_capability!r}")
     project = project_store.update_project(
         project_id, title=body.title, current_capability=body.current_capability,
+        user_id=user_id,
     )
     if project is None:
         raise HTTPException(404, "Project not found")
@@ -470,9 +509,9 @@ def patch_project(project_id: str, body: _ProjectPatch):
 
 
 @app.post("/projects/{project_id}/progress")
-def set_progress(project_id: str, body: _StepStatus):
+def set_progress(project_id: str, body: _StepStatus, user_id: str | None = None):
     from ..projects import store as project_store
-    if project_store.get_project(project_id) is None:
+    if project_store.get_project(project_id, user_id=user_id) is None:
         raise HTTPException(404, "Project not found")
     try:
         return project_store.set_step_status(project_id, body.step_id, body.status, body.data)
@@ -481,9 +520,9 @@ def set_progress(project_id: str, body: _StepStatus):
 
 
 @app.post("/projects/{project_id}/checkpoints")
-def upsert_checkpoint(project_id: str, body: _CheckpointUpsert):
+def upsert_checkpoint(project_id: str, body: _CheckpointUpsert, user_id: str | None = None):
     from ..projects import store as project_store
-    if project_store.get_project(project_id) is None:
+    if project_store.get_project(project_id, user_id=user_id) is None:
         raise HTTPException(404, "Project not found")
     try:
         return project_store.upsert_checkpoint(

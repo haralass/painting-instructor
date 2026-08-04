@@ -107,6 +107,8 @@ export type JobStatus = {
   step: string;
   message: string;
   analysis_ready?: boolean;  // A3: true when preliminary manifest is available
+  // 1-based place in the worker queue while queued; absent when unknown.
+  queue_position?: number | null;
   result?: {
     manifest: string;
     pages: string[];
